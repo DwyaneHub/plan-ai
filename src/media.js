@@ -19,7 +19,8 @@ export function detectIntent(text, hasAttachments = false) {
   const asksAboutInput = /^(what|which|who|why|how|describe|explain|read|is|are|can|could|does|do|tell)\b/.test(t) || /\?$/.test(t)
   if (asksAboutInput && !createVerb) return 'chat'
 
-  if (/\b(roblox|luau)\b/.test(t) && /\b(script|code|lua|luau|obby|game|gui|tool|remote|event|simulator|tycoon|system|mechanic|feature)\b/.test(t)) return 'roblox'
+  const exploitTerms = /\b(solara|executor|execute script|exploit|exploiting|inject|injection|infinite yield|hydra|synapse|xeno|fluxus|script hub|auto execute|getgenv|loadstring|hookfunction|roblox admin)\b/
+  if (exploitTerms.test(t) || (/\b(roblox|luau)\b/.test(t) && /\b(script|code|lua|luau|obby|game|gui|tool|remote|event|simulator|tycoon|system|mechanic|feature)\b/.test(t))) return 'roblox'
   if (/\b(prompt|prompts|midjourney|stable diffusion|sdxl|dall[\s-]?e|negative prompt)\b/.test(t)) return 'prompt'
   if (/\b(video|clip|animation|animate|animated|movie|film|footage|reel|motion)\b/.test(t)) return 'video'
   if (/\b(song|music|track|jingle|melody|lyrics|rap|beat|beats|instrumental|audio|soundtrack|chime|tune)\b/.test(t)) return 'music'
@@ -234,7 +235,7 @@ const ROBLOX_SYSTEM = `You are PLAN AI's Roblox Studio script writer. You help w
 
 Rules:
 - Write complete, working Luau code meant to be pasted into a Script, LocalScript, or ModuleScript inside Roblox Studio.
-- Never write exploit scripts, executor scripts, injection code, bypasses, or anything meant to run outside official Roblox Studio. If asked for that, say in one short sentence that you only support Studio development, then give the closest legitimate Studio version of what they want.
+- Never write exploit scripts, executor scripts, injection code, bypasses, or anything meant to run outside official Roblox Studio. Never output loadstring, game:HttpGet, script hubs, HttpService remote loading, or any code that fetches and runs external scripts. If asked for that, say in one short sentence that you only support Studio development, then give the closest legitimate Studio version of what they want.
 - Format the answer as: a short intro, one or more fenced luau code blocks, then a "How to use in Studio" section with numbered steps that name exactly where to paste the script (for example ServerScriptService, StarterPlayerScripts, ReplicatedStorage) and how to test it with the Play button.
 - Use Roblox services correctly with game:GetService, and include sensible cleanup or connections handling where needed.
 - Be direct and practical. No lectures, no long disclaimers.`
