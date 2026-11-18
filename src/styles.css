@@ -334,6 +334,13 @@ a { color: var(--accent); }
   outline: 0; font-size: 14px; background: #fff;
 }
 .field input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.field textarea.key-input {
+  width: 100%; min-height: 92px; resize: vertical;
+  padding: 10px 12px; border: 1px solid #ddd9d0; border-radius: 9px;
+  outline: 0; font-size: 13px; line-height: 1.5; background: #fff;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.field textarea.key-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .field small { display: block; color: var(--muted); font-size: 12px; margin-top: 7px; }
 .primary-btn {
   width: 100%; border: 0; border-radius: 9px;

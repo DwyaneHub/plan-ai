@@ -5,7 +5,7 @@ import {
   ArrowUp, Check, Cloud, Copy, Download, ExternalLink, Globe,
   LogIn, LogOut, Menu, Paperclip, Plus, RefreshCw, Settings, Sparkles, Trash2, X,
 } from 'lucide-react'
-import { chatWithGemini } from './gemini.js'
+import { chatWithGemini, getApiKeys, shouldTryNextKey } from './gemini.js'
 import {
   detectIntent, generateImage, generateMusic, generateVideo,
   generateWebsite, PROMPT_SYSTEM_HINT,
@@ -116,33 +116,43 @@ function groupChats(chats) {
 }
 
 function SettingsModal({ settings, onChange, onClose, onClear }) {
+  const keysText = Array.isArray(settings.apiKeys)
+    ? settings.apiKeys.join('\n')
+    : (settings.apiKey || '')
+  const keyCount = getApiKeys(settings).length
+
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
       <div className="modal" onMouseDown={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
         <div className="modal-head">
-          <h2>API key</h2>
+          <h2>API keys</h2>
           <button className="icon-btn" onClick={onClose} aria-label="Close"><X size={18} /></button>
         </div>
         <p className="modal-intro">
-          PLAN AI runs on Gemini. Your key is saved only in this browser and is sent directly to Google — never to us.
+          PLAN AI runs on Gemini. Your keys stay in this browser and go directly to Google. Add multiple keys — when one hits its limit, the next one is used automatically.
         </p>
         <label className="field">
-          <span>Gemini API key</span>
-          <input
-            type="password"
+          <span>Gemini API keys — one per line</span>
+          <textarea
+            className="key-input"
+            rows={4}
             autoComplete="off"
             spellCheck="false"
-            placeholder="AQ.... or AIza..."
-            value={settings.apiKey || ''}
-            onChange={(e) => onChange({ ...settings, apiKey: e.target.value })}
+            placeholder={'AQ....\nAIza...'}
+            value={keysText}
+            onChange={(e) => {
+              const keys = e.target.value.split('\n').map((k) => k.trim()).filter(Boolean)
+              onChange({ ...settings, apiKeys: keys, apiKey: keys[0] || '' })
+            }}
             autoFocus
           />
           <small>
-            Get a free key at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">aistudio.google.com/apikey</a>
+            {keyCount ? `${keyCount} key${keyCount > 1 ? 's' : ''} loaded. ` : ''}
+            Get keys at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">aistudio.google.com/apikey</a>
           </small>
         </label>
         <button className="primary-btn" onClick={onClose}>Done</button>
-        <button className="danger-link" onClick={onClear}><Trash2 size={14} /> Clear all chats and key</button>
+        <button className="danger-link" onClick={onClear}><Trash2 size={14} /> Clear all chats and keys</button>
       </div>
     </div>
   )
@@ -362,7 +372,7 @@ export default function App() {
   const lastSynced = useRef('')
 
   const activeChat = useMemo(() => chats.find((c) => c.id === activeId) || null, [chats, activeId])
-  const hasKey = Boolean((settings.apiKey || '').trim())
+  const hasKey = getApiKeys(settings).length > 0
 
   useEffect(() => { chatsRef.current = chats }, [chats])
 
@@ -515,6 +525,26 @@ export default function App() {
     endRef.current?.scrollIntoView({ block: 'end' })
   }, [chats, streamText, streaming])
 
+  const runWithKeys = useCallback(async (task) => {
+    const keys = getApiKeys(settings)
+    if (!keys.length) throw new Error('Add your Gemini API key in settings first.')
+    let lastError
+    for (let i = 0; i < keys.length; i += 1) {
+      try {
+        return await task(keys[i])
+      } catch (err) {
+        lastError = err
+        if (shouldTryNextKey(err) && i < keys.length - 1) {
+          setProgress(`Key ${i + 1} limited — trying key ${i + 2}…`)
+          setStreamText('')
+          continue
+        }
+        throw err
+      }
+    }
+    throw lastError
+  }, [settings])
+
   const send = useCallback(async (raw) => {
     const text = String(raw || '').trim()
     const sentAttachments = attachments.map((a) => ({ ...a }))
@@ -571,13 +601,13 @@ export default function App() {
     try {
       let result
       if (intent === 'image') {
-        result = await generateImage({ apiKey: settings.apiKey, prompt: promptText, attachments: sentAttachments })
+        result = await runWithKeys((apiKey) => generateImage({ apiKey, prompt: promptText, attachments: sentAttachments }))
       } else if (intent === 'music') {
-        result = await generateMusic({ apiKey: settings.apiKey, prompt: promptText, attachments: sentAttachments })
+        result = await runWithKeys((apiKey) => generateMusic({ apiKey, prompt: promptText, attachments: sentAttachments }))
       } else if (intent === 'video') {
-        result = await generateVideo({ apiKey: settings.apiKey, prompt: promptText, onProgress: setProgress })
+        result = await runWithKeys((apiKey) => generateVideo({ apiKey, prompt: promptText, onProgress: setProgress }))
       } else if (intent === 'website') {
-        result = await generateWebsite({ apiKey: settings.apiKey, prompt: promptText, attachments: sentAttachments })
+        result = await runWithKeys((apiKey) => generateWebsite({ apiKey, prompt: promptText, attachments: sentAttachments }))
       } else {
         let apiMessages = messages
         if (intent === 'prompt') {
@@ -590,11 +620,11 @@ export default function App() {
             },
           ]
         }
-        const answer = await chatWithGemini({
-          apiKey: settings.apiKey,
+        const answer = await runWithKeys((apiKey) => chatWithGemini({
+          apiKey,
           messages: apiMessages,
           onChunk: (full) => setStreamText(full),
-        })
+        }))
         result = { text: answer, media: [] }
       }
       setStreamText('')
@@ -623,7 +653,7 @@ export default function App() {
       setProgress('')
       setTimeout(() => textarea.current?.focus(), 30)
     }
-  }, [streaming, hasKey, activeChat, settings.apiKey, attachments, notify])
+  }, [streaming, hasKey, activeChat, runWithKeys, attachments, notify])
 
   const newChat = useCallback(() => {
     setActiveId(null)
@@ -647,7 +677,7 @@ export default function App() {
   const clearAll = useCallback(() => {
     setChats([])
     setActiveId(null)
-    setSettings({ apiKey: '' })
+    setSettings({ apiKey: '', apiKeys: [] })
     setShowSettings(false)
     setShowCloud(false)
     lastSynced.current = ''
