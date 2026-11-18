@@ -280,6 +280,7 @@ export default function App() {
           <div className="topbar-title">
             <strong>PLAN AI</strong>
             <span className="model-pill">Gemini</span>
+            <span className="free-pill">UNRESTRICTED</span>
           </div>
           <button className="icon-btn top-settings" onClick={() => setShowSettings(true)} aria-label="Settings"><Settings size={18} /></button>
         </header>
@@ -328,7 +329,6 @@ export default function App() {
               {streaming ? <span className="spinner" /> : <ArrowUp size={17} />}
             </button>
           </div>
-          <div className="disclaimer">PLAN AI can make mistakes. Double-check important information.</div>
         </div>
       </main>
 
