@@ -1,9 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { ArrowUp, Check, Copy, Menu, Paperclip, Plus, Settings, Sparkles, Trash2, X } from 'lucide-react'
+import {
+  ArrowUp, Check, Cloud, Copy, Download, ExternalLink, Globe,
+  LogIn, LogOut, Menu, Paperclip, Plus, RefreshCw, Settings, Sparkles, Trash2, X,
+} from 'lucide-react'
 import { chatWithGemini } from './gemini.js'
-import { detectIntent, generateImage, generateMusic, generateVideo, PROMPT_SYSTEM_HINT } from './media.js'
+import {
+  detectIntent, generateImage, generateMusic, generateVideo,
+  generateWebsite, PROMPT_SYSTEM_HINT,
+} from './media.js'
+import {
+  clearSupabaseConfig, fetchCloudChats, getCurrentUser, isDisposableEmail,
+  isSupabaseConfigured, loadSupabaseConfig, pushCloudChats,
+  saveSupabaseConfig, signInWithGoogle, signOut, subscribeToAuth,
+} from './supabase.js'
 
 const CHATS_KEY = 'planai.chats'
 const ACTIVE_KEY = 'planai.activeId'
@@ -137,6 +148,113 @@ function SettingsModal({ settings, onChange, onClose, onClear }) {
   )
 }
 
+function CloudModal({ config, onSave, onClear, onClose, user, onSignIn, onSignOut, onSyncNow, syncing, syncError }) {
+  const [draft, setDraft] = useState(config)
+  const configured = isSupabaseConfigured(config)
+
+  return (
+    <div className="modal-backdrop" onMouseDown={onClose}>
+      <div className="modal cloud-modal" onMouseDown={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+        <div className="modal-head">
+          <h2><Cloud size={18} /> Cloud sync</h2>
+          <button className="icon-btn" onClick={onClose} aria-label="Close"><X size={18} /></button>
+        </div>
+        <p className="modal-intro">
+          Sign in with Google to sync chats across devices. Your Gemini API key stays in this browser.
+        </p>
+
+        <label className="field">
+          <span>Supabase project URL</span>
+          <input
+            value={draft.url || ''}
+            placeholder="https://your-project.supabase.co"
+            spellCheck="false"
+            onChange={(e) => setDraft({ ...draft, url: e.target.value })}
+          />
+        </label>
+        <label className="field">
+          <span>Anon / public key</span>
+          <input
+            type="password"
+            value={draft.anonKey || ''}
+            placeholder="eyJ..."
+            spellCheck="false"
+            onChange={(e) => setDraft({ ...draft, anonKey: e.target.value })}
+          />
+          <small>Never paste a service_role key here.</small>
+        </label>
+        <label className="field">
+          <span>Blocked email domains</span>
+          <input
+            value={(draft.blockedDomains || []).join(', ')}
+            placeholder="tempmail.com, mailinator.com"
+            spellCheck="false"
+            onChange={(e) => setDraft({ ...draft, blockedDomains: e.target.value.split(',') })}
+          />
+          <small>Comma-separated. Common disposable domains are always blocked.</small>
+        </label>
+
+        <button className="primary-btn" onClick={() => onSave(draft)}>Save cloud settings</button>
+
+        {configured && (
+          <div className="cloud-section">
+            {user ? (
+              <>
+                <div className="cloud-user">
+                  <Cloud size={17} />
+                  <div>
+                    <strong>{user.email || 'Google account'}</strong>
+                    <small>Connected</small>
+                  </div>
+                </div>
+                {syncError && <div className="cloud-error">{syncError}</div>}
+                <button className="primary-btn" onClick={onSyncNow} disabled={syncing}>
+                  <RefreshCw size={15} className={syncing ? 'spin' : ''} /> {syncing ? 'Syncing…' : 'Sync now'}
+                </button>
+                <button className="danger-link" onClick={onSignOut}><LogOut size={14} /> Sign out</button>
+              </>
+            ) : (
+              <button className="primary-btn google-btn" onClick={onSignIn}><LogIn size={15} /> Continue with Google</button>
+            )}
+          </div>
+        )}
+
+        <a
+          className="setup-link"
+          href="https://github.com/DwyaneHub/plan-ai/blob/main/SUPABASE_SETUP.md"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Setup instructions <ExternalLink size={12} />
+        </a>
+        {configured && <button className="danger-link" onClick={onClear}>Forget cloud settings</button>}
+      </div>
+    </div>
+  )
+}
+
+function WebsiteBlock({ html }) {
+  const url = useMemo(() => URL.createObjectURL(new Blob([html], { type: 'text/html' })), [html])
+  useEffect(() => () => URL.revokeObjectURL(url), [url])
+  return (
+    <div className="website-block">
+      <div className="website-actions">
+        <button className="copy-btn always" onClick={() => window.open(url, '_blank', 'noopener,noreferrer')}>
+          <ExternalLink size={13} /> Open
+        </button>
+        <a className="copy-btn always" href={url} download="plan-ai-website.html">
+          <Download size={13} /> Download
+        </a>
+      </div>
+      <iframe title="Generated website preview" srcDoc={html} sandbox="allow-scripts" />
+      <details className="website-source">
+        <summary>View HTML source</summary>
+        <pre>{html}</pre>
+      </details>
+    </div>
+  )
+}
+
 function MediaBlock({ media }) {
   const src = `data:${media.mime};base64,${media.data}`
   const ext = media.mime.includes('mp4') ? 'mp4' : media.mime.includes('mpeg') || media.mime.includes('mp3') ? 'mp3' : 'png'
@@ -151,7 +269,7 @@ function MediaBlock({ media }) {
   )
 }
 
-function Message({ role, content, media = [], attachments = [], kind, onNotify }) {
+function Message({ role, content, media = [], attachments = [], website, kind, onNotify }) {
   const copy = async (value, success) => {
     const ok = await copyToClipboard(value)
     onNotify?.(ok ? success : 'Copy failed — select the text manually')
@@ -177,7 +295,7 @@ function Message({ role, content, media = [], attachments = [], kind, onNotify }
     )
   }
 
-  const body = content ? (
+  const body = content && kind !== 'website' ? (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
       components={{
@@ -209,6 +327,7 @@ function Message({ role, content, media = [], attachments = [], kind, onNotify }
           <button className="copy-btn" onClick={() => copy(content, 'Message copied')} title="Copy message"><Copy size={13} /> Copy</button>
         </div>
         {body && <div className="markdown">{body}</div>}
+        {kind === 'website' && website && <WebsiteBlock html={website} />}
         {media.map((m, i) => <MediaBlock key={i} media={m} />)}
       </div>
     </div>
@@ -226,6 +345,11 @@ export default function App() {
   const [progress, setProgress] = useState('')
   const [settings, setSettings] = useState(() => ({ apiKey: '', ...loadJSON(SETTINGS_KEY, {}) }))
   const [showSettings, setShowSettings] = useState(false)
+  const [showCloud, setShowCloud] = useState(false)
+  const [cloudConfig, setCloudConfig] = useState(() => loadSupabaseConfig())
+  const [user, setUser] = useState(null)
+  const [syncing, setSyncing] = useState(false)
+  const [syncError, setSyncError] = useState('')
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [toast, setToast] = useState('')
 
@@ -233,9 +357,14 @@ export default function App() {
   const fileInput = useRef(null)
   const endRef = useRef(null)
   const toastTimer = useRef(null)
+  const chatsRef = useRef(chats)
+  const hydrating = useRef(false)
+  const lastSynced = useRef('')
 
   const activeChat = useMemo(() => chats.find((c) => c.id === activeId) || null, [chats, activeId])
   const hasKey = Boolean((settings.apiKey || '').trim())
+
+  useEffect(() => { chatsRef.current = chats }, [chats])
 
   useEffect(() => {
     try {
@@ -262,6 +391,105 @@ export default function App() {
     if (toastTimer.current) clearTimeout(toastTimer.current)
     toastTimer.current = setTimeout(() => setToast(''), 2600)
   }, [])
+
+  useEffect(() => {
+    let active = true
+    const applyUser = async (nextUser) => {
+      if (!active) return
+      if (nextUser && isDisposableEmail(nextUser.email, cloudConfig.blockedDomains)) {
+        notify('Temporary email addresses are not allowed')
+        await signOut().catch(() => {})
+        setUser(null)
+        return
+      }
+      setUser(nextUser)
+      setSyncError('')
+      if (!nextUser) return
+
+      hydrating.current = true
+      try {
+        const cloud = await fetchCloudChats(nextUser)
+        if (cloud && cloud.length) {
+          setChats(cloud)
+          lastSynced.current = JSON.stringify(cloud)
+        } else {
+          const initial = chatsRef.current
+          await pushCloudChats(nextUser, initial)
+          lastSynced.current = JSON.stringify(initial)
+        }
+      } catch (err) {
+        setSyncError(err?.message || 'Cloud sync failed')
+      } finally {
+        hydrating.current = false
+      }
+    }
+
+    getCurrentUser().then(applyUser).catch(() => {})
+    const unsubscribe = subscribeToAuth(applyUser)
+    return () => { active = false; unsubscribe() }
+  }, [cloudConfig.blockedDomains, notify])
+
+  useEffect(() => {
+    if (!user || hydrating.current) return
+    const serialized = JSON.stringify(chats)
+    if (serialized === lastSynced.current) return
+    const timer = setTimeout(async () => {
+      setSyncing(true)
+      try {
+        await pushCloudChats(user, chats)
+        lastSynced.current = serialized
+        setSyncError('')
+      } catch (err) {
+        setSyncError(err?.message || 'Cloud sync failed')
+      } finally {
+        setSyncing(false)
+      }
+    }, 900)
+    return () => clearTimeout(timer)
+  }, [chats, user])
+
+  const handleCloudSave = useCallback((next) => {
+    const clean = saveSupabaseConfig(next)
+    setCloudConfig(clean)
+    notify('Cloud settings saved')
+  }, [notify])
+
+  const handleCloudClear = useCallback(() => {
+    clearSupabaseConfig()
+    setCloudConfig(loadSupabaseConfig())
+    setUser(null)
+    notify('Cloud settings removed')
+  }, [notify])
+
+  const handleSignIn = useCallback(async () => {
+    try { await signInWithGoogle() } catch (err) { notify(err?.message || 'Sign-in failed') }
+  }, [notify])
+
+  const handleSignOut = useCallback(async () => {
+    try {
+      await signOut()
+      setUser(null)
+      notify('Signed out')
+    } catch (err) {
+      notify(err?.message || 'Sign-out failed')
+    }
+  }, [notify])
+
+  const syncNow = useCallback(async () => {
+    if (!user) return
+    setSyncing(true)
+    try {
+      await pushCloudChats(user, chatsRef.current)
+      lastSynced.current = JSON.stringify(chatsRef.current)
+      setSyncError('')
+      notify('Chats synced')
+    } catch (err) {
+      setSyncError(err?.message || 'Cloud sync failed')
+      notify(err?.message || 'Cloud sync failed')
+    } finally {
+      setSyncing(false)
+    }
+  }, [user, notify])
 
   const addFiles = useCallback(async (fileList) => {
     const files = Array.from(fileList || []).filter((f) => String(f.type || '').startsWith('image/'))
@@ -334,6 +562,7 @@ export default function App() {
       image: 'Generating image…',
       video: 'Starting video…',
       music: 'Composing song…',
+      website: 'Building website…',
       prompt: 'Writing prompt…',
       chat: 'Thinking…',
     }
@@ -347,6 +576,8 @@ export default function App() {
         result = await generateMusic({ apiKey: settings.apiKey, prompt: promptText, attachments: sentAttachments })
       } else if (intent === 'video') {
         result = await generateVideo({ apiKey: settings.apiKey, prompt: promptText, onProgress: setProgress })
+      } else if (intent === 'website') {
+        result = await generateWebsite({ apiKey: settings.apiKey, prompt: promptText, attachments: sentAttachments })
       } else {
         let apiMessages = messages
         if (intent === 'prompt') {
@@ -374,6 +605,7 @@ export default function App() {
               role: 'assistant',
               content: result.text,
               media: result.media || [],
+              website: result.website || null,
               kind: intent,
               id: `a_${Date.now()}`,
             }],
@@ -417,8 +649,11 @@ export default function App() {
     setActiveId(null)
     setSettings({ apiKey: '' })
     setShowSettings(false)
+    setShowCloud(false)
+    lastSynced.current = ''
+    if (user) pushCloudChats(user, []).catch(() => {})
     notify('Everything cleared')
-  }, [notify])
+  }, [notify, user])
 
   const copyChat = useCallback(async () => {
     const lines = (activeChat?.messages || [])
@@ -438,7 +673,7 @@ export default function App() {
         e.preventDefault()
         newChat()
       }
-      if (e.key === 'Escape') setShowSettings(false)
+      if (e.key === 'Escape') { setShowSettings(false); setShowCloud(false) }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -478,6 +713,9 @@ export default function App() {
         </div>
 
         <div className="sidebar-bottom">
+          <button className="settings-link" onClick={() => setShowCloud(true)}>
+            <Cloud size={16} /> Cloud sync {user && <span className="key-dot" />}
+          </button>
           <button className="settings-link" onClick={() => setShowSettings(true)}>
             <Settings size={16} /> API key {hasKey && <span className="key-dot" />}
           </button>
@@ -495,6 +733,9 @@ export default function App() {
             <span className="free-pill">UNRESTRICTED</span>
           </div>
           <div className="top-actions">
+            <button className="icon-btn" onClick={() => setShowCloud(true)} title="Cloud sync" aria-label="Cloud sync">
+              <Cloud size={17} /> {user && <span className="top-dot" />}
+            </button>
             <button className="icon-btn" onClick={copyChat} title="Copy whole conversation" aria-label="Copy conversation"><Copy size={17} /></button>
             <button className="icon-btn top-settings" onClick={() => setShowSettings(true)} aria-label="Settings"><Settings size={18} /></button>
           </div>
@@ -505,7 +746,7 @@ export default function App() {
             <div className="welcome">
               <div className="welcome-icon"><Star size={30} /></div>
               <h1>What can I help with?</h1>
-              <p>Chat, images, video, music, prompts — just ask.</p>
+              <p>Chat, images, video, music, websites, prompts — just ask.</p>
               {!hasKey && (
                 <button className="key-prompt" onClick={() => setShowSettings(true)}>
                   Add your Gemini API key to start <ArrowUp size={14} />
@@ -580,7 +821,7 @@ export default function App() {
                 ref={textarea}
                 value={draft}
                 rows={1}
-                placeholder="Ask, attach an image, or request media..."
+                placeholder="Ask, attach an image, or request a website..."
                 onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {
@@ -604,6 +845,20 @@ export default function App() {
 
       {showSettings && (
         <SettingsModal settings={settings} onChange={setSettings} onClose={() => setShowSettings(false)} onClear={clearAll} />
+      )}
+      {showCloud && (
+        <CloudModal
+          config={cloudConfig}
+          onSave={handleCloudSave}
+          onClear={handleCloudClear}
+          onClose={() => setShowCloud(false)}
+          user={user}
+          onSignIn={handleSignIn}
+          onSignOut={handleSignOut}
+          onSyncNow={syncNow}
+          syncing={syncing}
+          syncError={syncError}
+        />
       )}
       {toast && <div className="toast"><Check size={14} /> {toast}</div>}
     </div>

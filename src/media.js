@@ -1,7 +1,9 @@
 /**
  * Media generation for PLAN AI: images (Nano Banana), video (Gemini Omni),
- * music (Lyria), and prompt crafting. Uses the visitor's own Gemini key.
+ * music (Lyria), website building, and prompt crafting. Uses the visitor's own Gemini key.
  */
+
+import { GEMINI_MODEL } from './gemini.js'
 
 const API = 'https://generativelanguage.googleapis.com'
 
@@ -20,6 +22,7 @@ export function detectIntent(text, hasAttachments = false) {
   if (/\b(prompt|prompts|midjourney|stable diffusion|sdxl|dall[\s-]?e|negative prompt)\b/.test(t)) return 'prompt'
   if (/\b(video|clip|animation|animate|animated|movie|film|footage|reel|motion)\b/.test(t)) return 'video'
   if (/\b(song|music|track|jingle|melody|lyrics|rap|beat|beats|instrumental|audio|soundtrack|chime|tune)\b/.test(t)) return 'music'
+  if (/\b(website|web site|webpage|web page|landing page|html page|html|css|javascript app|react app|web app)\b/.test(t)) return 'website'
   if (/\b(image|images|picture|photo|draw|drawing|illustration|artwork|logo|poster|wallpaper|portrait|sketch|render|visual)\b/.test(t)) return 'image'
   if (hasAttachments && createVerb) return 'image'
   return 'chat'
@@ -167,6 +170,47 @@ export async function generateMusic({ apiKey, prompt, attachments = [], signal }
   }
   const lyrics = textFromParts(parts) || collectText(payload).join('\n\n')
   return { text: lyrics ? `**Lyrics / notes**\n\n${lyrics}` : 'Here is your track.', media }
+}
+
+const WEBSITE_SYSTEM = `You are an expert web developer. Build a complete, polished, single-file website.
+Return ONLY one self-contained HTML document with inline <style> and <script> blocks.
+No markdown fences, no explanations, no notes before or after the HTML.
+Make it responsive, accessible, visually refined, and actually usable. Use no external assets unless they are loaded from a public CDN.`
+
+function normalizeHtml(raw) {
+  let html = String(raw || '').trim()
+  const fenced = html.match(/```(?:html|htm)?\s*([\s\S]*?)```/i)
+  if (fenced) html = fenced[1].trim()
+  if (!html) return ''
+  if (/^\s*<!doctype|<html[\s>]/i.test(html)) return html
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PLAN AI Website</title>
+</head>
+<body>
+${html}
+</body>
+</html>`
+}
+
+export async function generateWebsite({ apiKey, prompt, attachments = [], signal }) {
+  const parts = [{ text: `Build a website for this request:\n\n${prompt}` }]
+  for (const a of attachments || []) {
+    if (a?.data) parts.push({ inlineData: { mimeType: a.mimeType || 'image/png', data: a.data } })
+  }
+  const body = {
+    systemInstruction: { parts: [{ text: WEBSITE_SYSTEM }] },
+    contents: [{ parts }],
+    generationConfig: { temperature: 0.35, maxOutputTokens: 16384 },
+  }
+  const payload = await apiFetch(`${API}/v1/models/${GEMINI_MODEL}:generateContent`, apiKey, { method: 'POST', body: JSON.stringify(body) }, signal)
+  const raw = textFromParts(partsOf(payload)) || collectText(payload).join('\n')
+  const html = normalizeHtml(raw)
+  if (!html) throw new Error('No website code came back. Try a clearer request.')
+  return { text: html, media: [], website: html }
 }
 
 const wait = (ms, signal) => new Promise((resolve, reject) => {
