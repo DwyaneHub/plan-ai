@@ -6,7 +6,7 @@ import {
   Target, Trash2, Wallet, WifiOff, X, Zap,
 } from 'lucide-react'
 import { EXAMPLES, generatePlan, planToMarkdown } from './engine.js'
-import { callClaude, CLAUDE_MODELS } from './claude.js'
+import { callGemini, GEMINI_MODELS } from './gemini.js'
 
 const DOMAIN_ICONS = {
   study: BookOpen, fitness: Activity, business: Briefcase, coding: Code2,
@@ -30,7 +30,7 @@ const DEFAULT_SETTINGS = {
   filtersOff: true,
   engine: 'local',
   apiKey: '',
-  claudeModel: CLAUDE_MODELS[0].id,
+  geminiModel: GEMINI_MODELS[0].id,
 }
 
 function loadJSON(key, fallback) {
@@ -220,8 +220,8 @@ function SettingsModal({ settings, onChange, onClose, onClear }) {
         <div className="engine-banner">
           <Cpu size={20} />
           <div>
-            <strong>PLAN-AI / {settings.engine === 'claude' ? 'Claude' : 'local-v1'}</strong>
-            <span>{settings.engine === 'claude' ? 'Runs on Claude using your own API key, from your browser.' : 'Runs in your browser. Zero requests sent anywhere.'}</span>
+            <strong>PLAN-AI / {settings.engine === 'gemini' ? 'Gemini' : 'local-v1'}</strong>
+            <span>{settings.engine === 'gemini' ? 'Runs on Gemini using your own API key, from your browser.' : 'Runs in your browser. Zero requests sent anywhere.'}</span>
           </div>
           <span className="live-dot" />
         </div>
@@ -230,31 +230,31 @@ function SettingsModal({ settings, onChange, onClose, onClear }) {
           <span>Planning engine</span>
           <select value={settings.engine || 'local'} onChange={(e) => onChange({ ...settings, engine: e.target.value })}>
             <option value="local">Your own model — local PLAN-AI (offline)</option>
-            <option value="claude">Claude API — bring your own key</option>
+            <option value="gemini">Gemini API — bring your own key</option>
           </select>
         </label>
 
-        {settings.engine === 'claude' && (
+        {settings.engine === 'gemini' && (
           <>
             <label className="field">
-              <span>Anthropic API key <em>stored only in this browser</em></span>
+              <span>Gemini API key <em>stored only in this browser</em></span>
               <input
                 type="password"
                 autoComplete="off"
-                placeholder="sk-ant-..."
+                placeholder="AIza... or AQ...."
                 value={settings.apiKey || ''}
                 onChange={(e) => onChange({ ...settings, apiKey: e.target.value })}
               />
               <small className="field-help">
-                Get a key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noreferrer">console.anthropic.com</a>.
-                It never leaves this tab except to call Anthropic directly.
+                Get a key at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">aistudio.google.com/apikey</a>.
+                It never leaves this tab except to call Google directly.
               </small>
             </label>
             <label className="field">
-              <span>Claude model</span>
-              <select value={settings.claudeModel || CLAUDE_MODELS[0].id}
-                onChange={(e) => onChange({ ...settings, claudeModel: e.target.value })}>
-                {CLAUDE_MODELS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+              <span>Gemini model</span>
+              <select value={settings.geminiModel || GEMINI_MODELS[0].id}
+                onChange={(e) => onChange({ ...settings, geminiModel: e.target.value })}>
+                {GEMINI_MODELS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
               </select>
             </label>
           </>
@@ -287,7 +287,7 @@ function SettingsModal({ settings, onChange, onClose, onClear }) {
           <span className="switch on"><i /></span>
         </div>
         <div className="toggle-row">
-          <div><WifiOff size={16} /><span><strong>{settings.engine === 'claude' ? 'Claude via your API key' : 'Local inference only'}</strong><small>{settings.engine === 'claude' ? 'Your key is stored in this browser only.' : 'No API key, no external endpoint.'}</small></span></div>
+          <div><WifiOff size={16} /><span><strong>{settings.engine === 'gemini' ? 'Gemini via your API key' : 'Local inference only'}</strong><small>{settings.engine === 'gemini' ? 'Your key is stored in this browser only.' : 'No API key, no external endpoint.'}</small></span></div>
           <span className="switch on"><i /></span>
         </div>
 
@@ -380,8 +380,8 @@ export default function App() {
       level: settings.level,
     })
 
-    if (settings.engine === 'claude') {
-      // Animate reasoning steps while Claude responds.
+    if (settings.engine === 'gemini') {
+      // Animate reasoning steps while Gemini responds.
       let i = 0
       const tick = () => {
         setStage(i % THINKING.length)
@@ -390,14 +390,14 @@ export default function App() {
       }
       tick()
 
-      callClaude({
+      callGemini({
         apiKey: settings.apiKey,
-        model: settings.claudeModel,
+        model: settings.geminiModel,
         prompt: `Goal: ${value}\nPreferred level: ${settings.level}.\nDesired duration: ${settings.days || 'infer from goal'}.\nFocus hours per block: ${settings.hours}h.`,
       })
         .then(finish)
         .catch((err) => {
-          notify(`Claude error — using your local model. ${err.message}`)
+          notify(`Gemini error — using your local model. ${err.message}`)
           finish(nextPlan)
         })
       return
@@ -563,7 +563,7 @@ export default function App() {
         <div className="sidebar-bottom">
           <div className="engine-status">
             <span className="pulse-dot" />
-            <div><strong>Engine online</strong><small>{settings.engine === 'claude' ? 'claude-api' : 'local-v1'} · {history.length} plans saved</small></div>
+            <div><strong>Engine online</strong><small>{settings.engine === 'gemini' ? 'gemini-api' : 'local-v1'} · {history.length} plans saved</small></div>
           </div>
           <button className="settings-link" onClick={() => setShowSettings(true)}><Settings size={15} /> Model settings</button>
         </div>
@@ -581,8 +581,8 @@ export default function App() {
           </div>
           <div className="topbar-badges">
             <span className="badge"><ShieldOff size={12} /> NO RESTRICTIONS</span>
-            <span className="badge"><WifiOff size={12} /> {settings.engine === 'claude' ? 'YOUR KEY' : 'NO API KEY'}</span>
-            <span className="badge accent"><Cpu size={12} /> {settings.engine === 'claude' ? 'CLAUDE' : 'ON-DEVICE'}</span>
+            <span className="badge"><WifiOff size={12} /> {settings.engine === 'gemini' ? 'YOUR KEY' : 'NO API KEY'}</span>
+            <span className="badge accent"><Cpu size={12} /> {settings.engine === 'gemini' ? 'GEMINI' : 'ON-DEVICE'}</span>
           </div>
           <button className="icon-btn top-settings" onClick={() => setShowSettings(true)} title="Settings"><Settings size={17} /></button>
         </header>
