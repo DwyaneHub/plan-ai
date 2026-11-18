@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { ArrowUp, Check, Menu, Plus, Settings, Sparkles, Trash2, X } from 'lucide-react'
+import { ArrowUp, Check, Copy, Menu, Plus, Settings, Sparkles, Trash2, X } from 'lucide-react'
 import { chatWithGemini } from './gemini.js'
 import { detectIntent, generateImage, generateMusic, generateVideo, PROMPT_SYSTEM_HINT } from './media.js'
 
@@ -15,6 +15,29 @@ function loadJSON(key, fallback) {
     return raw ? JSON.parse(raw) : fallback
   } catch {
     return fallback
+  }
+}
+
+async function copyToClipboard(text) {
+  const value = String(text || '')
+  try {
+    await navigator.clipboard.writeText(value)
+    return true
+  } catch {
+    try {
+      const el = document.createElement('textarea')
+      el.value = value
+      el.setAttribute('readonly', '')
+      el.style.position = 'fixed'
+      el.style.top = '-1000px'
+      document.body.appendChild(el)
+      el.select()
+      const ok = document.execCommand('copy')
+      el.remove()
+      return ok
+    } catch {
+      return false
+    }
   }
 }
 
@@ -89,29 +112,54 @@ function MediaBlock({ media }) {
   )
 }
 
-function Message({ role, content, media = [], kind }) {
+function Message({ role, content, media = [], kind, onNotify }) {
+  const copy = async (value, success) => {
+    const ok = await copyToClipboard(value)
+    onNotify?.(ok ? success : 'Copy failed — select the text manually')
+  }
+
   if (role === 'user') {
     return (
       <div className="message user">
-        <div className="user-bubble">{content}</div>
+        <div className="user-wrap">
+          <button className="copy-btn user-copy" onClick={() => copy(content, 'Message copied')} title="Copy message"><Copy size={13} /> Copy</button>
+          <div className="user-bubble">{content}</div>
+        </div>
       </div>
     )
   }
+
   const body = content ? (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
       components={{
         a: ({ node, ...props }) => <a {...props} target="_blank" rel="noreferrer" />,
+        pre: ({ node, children, ...props }) => {
+          const child = Array.isArray(children) ? children[0] : children
+          const code = String(child?.props?.children ?? '').replace(/\n$/, '')
+          return (
+            <div className="code-block">
+              <button className="code-copy" onClick={() => copy(code, 'Code copied')} title="Copy code">
+                <Copy size={13} /> Copy
+              </button>
+              <pre {...props}>{children}</pre>
+            </div>
+          )
+        },
       }}
     >
       {content}
     </ReactMarkdown>
   ) : null
+
   return (
     <div className="message assistant">
       <div className="assistant-avatar"><Star size={16} /></div>
       <div className="assistant-body">
-        {kind && kind !== 'chat' && <span className="kind-tag">{kind}</span>}
+        <div className="message-tools">
+          {kind && kind !== 'chat' && <span className="kind-tag">{kind}</span>}
+          <button className="copy-btn" onClick={() => copy(content, 'Message copied')} title="Copy message"><Copy size={13} /> Copy</button>
+        </div>
         {body && <div className="markdown">{body}</div>}
         {media.map((m, i) => <MediaBlock key={i} media={m} />)}
       </div>
@@ -288,6 +336,18 @@ export default function App() {
     notify('Everything cleared')
   }, [notify])
 
+  const copyChat = useCallback(async () => {
+    const lines = (activeChat?.messages || [])
+      .map((m) => `${m.role === 'user' ? 'You' : 'PLAN AI'}:\n${m.content || ''}`)
+      .join('\n\n')
+    if (!lines.trim()) {
+      notify('Nothing to copy yet')
+      return
+    }
+    const ok = await copyToClipboard(lines)
+    notify(ok ? 'Conversation copied' : 'Copy failed — select the text manually')
+  }, [activeChat, notify])
+
   useEffect(() => {
     const onKey = (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'n') {
@@ -350,7 +410,10 @@ export default function App() {
             <span className="model-pill">Gemini</span>
             <span className="free-pill">UNRESTRICTED</span>
           </div>
-          <button className="icon-btn top-settings" onClick={() => setShowSettings(true)} aria-label="Settings"><Settings size={18} /></button>
+          <div className="top-actions">
+            <button className="icon-btn" onClick={copyChat} title="Copy whole conversation" aria-label="Copy conversation"><Copy size={17} /></button>
+            <button className="icon-btn top-settings" onClick={() => setShowSettings(true)} aria-label="Settings"><Settings size={18} /></button>
+          </div>
         </header>
 
         <div className="messages">
@@ -367,10 +430,10 @@ export default function App() {
             </div>
           ) : (
             <div className="thread">
-              {(activeChat?.messages || []).map((m) => <Message key={m.id} {...m} />)}
+              {(activeChat?.messages || []).map((m) => <Message key={m.id} {...m} onNotify={notify} />)}
               {streaming && (
                 streamText
-                  ? <Message role="assistant" content={streamText} />
+                  ? <Message role="assistant" content={streamText} onNotify={notify} />
                   : (
                       <div className="message assistant thinking">
                         <div className="assistant-avatar"><Star size={16} /></div>
