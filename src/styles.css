@@ -92,6 +92,7 @@ a { color: var(--accent); }
   padding: 10px; border-radius: 8px; font-size: 13.5px; color: #4a4843;
 }
 .settings-link:hover { background: var(--sidebar-hover); }
+.settings-link.install-link { color: var(--accent); font-weight: 600; }
 .key-dot { width: 7px; height: 7px; border-radius: 50%; background: #55a868; margin-left: auto; }
 .sidebar-overlay { display: none; }
 

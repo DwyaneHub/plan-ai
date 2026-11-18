@@ -346,7 +346,10 @@ function Message({ role, content, media = [], attachments = [], website, kind, o
 
 export default function App() {
   const [chats, setChats] = useState(() => loadJSON(CHATS_KEY, []))
-  const [activeId, setActiveId] = useState(() => loadJSON(ACTIVE_KEY, null))
+  const [activeId, setActiveId] = useState(() => {
+    if (new URLSearchParams(window.location.search).has('new')) return null
+    return loadJSON(ACTIVE_KEY, null)
+  })
   const [draft, setDraft] = useState('')
   const [attachments, setAttachments] = useState([])
   const [dragging, setDragging] = useState(false)
@@ -361,6 +364,7 @@ export default function App() {
   const [syncing, setSyncing] = useState(false)
   const [syncError, setSyncError] = useState('')
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [installPrompt, setInstallPrompt] = useState(null)
   const [toast, setToast] = useState('')
 
   const textarea = useRef(null)
@@ -401,6 +405,23 @@ export default function App() {
     if (toastTimer.current) clearTimeout(toastTimer.current)
     toastTimer.current = setTimeout(() => setToast(''), 2600)
   }, [])
+
+  useEffect(() => {
+    const onInstallPrompt = (e) => {
+      e.preventDefault()
+      setInstallPrompt(e)
+    }
+    window.addEventListener('beforeinstallprompt', onInstallPrompt)
+    return () => window.removeEventListener('beforeinstallprompt', onInstallPrompt)
+  }, [])
+
+  const installApp = useCallback(async () => {
+    if (!installPrompt) return
+    installPrompt.prompt()
+    const { outcome } = await installPrompt.userChoice
+    setInstallPrompt(null)
+    if (outcome === 'accepted') notify('PLAN AI installed')
+  }, [installPrompt, notify])
 
   useEffect(() => {
     let active = true
@@ -743,6 +764,11 @@ export default function App() {
         </div>
 
         <div className="sidebar-bottom">
+          {installPrompt && (
+            <button className="settings-link install-link" onClick={installApp}>
+              <Download size={16} /> Install app
+            </button>
+          )}
           <button className="settings-link" onClick={() => setShowCloud(true)}>
             <Cloud size={16} /> Cloud sync {user && <span className="key-dot" />}
           </button>
