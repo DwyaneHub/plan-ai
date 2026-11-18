@@ -74,7 +74,7 @@ function normalize(data, prompt) {
   }))
   const num = (v, fallback) => (Number.isFinite(Number(v)) ? Number(v) : fallback)
   const tasks = phases.reduce((sum, p) => sum + p.tasks.length, 0)
-  const hours = num(data.hours, 1)
+  const hours = Math.max(0.5, Math.min(12, num(data.hours, 1)))
   const confidence = Math.max(70, Math.min(99, num(data.confidence, 88)))
   return {
     id: `gemini_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -96,7 +96,7 @@ function normalize(data, prompt) {
     milestones: Array.isArray(data.milestones) ? data.milestones.map(String) : [],
     risks: Array.isArray(data.risks) ? data.risks.map(String) : [],
     tips: Array.isArray(data.tips) ? data.tips.map(String) : [],
-    stats: { phases: phases.length, tasks, hours: Math.round(tasks * hours * 1.6), confidence },
+    stats: { phases: phases.length, tasks, hours: Math.round(tasks * hours), confidence },
     model: 'PLAN AI / Gemini',
   }
 }
