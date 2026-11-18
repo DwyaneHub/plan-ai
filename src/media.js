@@ -1,6 +1,6 @@
 /**
  * Media generation for PLAN AI: images (Nano Banana), video (Gemini Omni),
- * music (Lyria), website building, Roblox Studio scripts, and prompt crafting.
+ * music (Lyria), website building, desktop apps, Roblox Studio scripts, and prompt crafting.
  */
 
 import { GEMINI_MODEL } from './gemini.js'
@@ -18,6 +18,11 @@ export function detectIntent(text, hasAttachments = false) {
   const createVerb = /\b(generate|make|create|draw|design|produce|render|paint|sketch|compose|write|animate|turn|convert|edit|change|transform)\b/.test(t)
   const asksAboutInput = /^(what|which|who|why|how|describe|explain|read|is|are|can|could|does|do|tell)\b/.test(t) || /\?$/.test(t)
   if (asksAboutInput && !createVerb) return 'chat'
+
+  const appRequest = /\b(app|application|software|program|exe|electron)\b/.test(t)
+  const desktopHint = /\b(pc|windows|desktop|electron|exe|offline installer)\b/.test(t)
+  const nonDesktop = /\b(web|website|browser|android|ios|iphone|mobile|roblox)\b/.test(t)
+  if (appRequest && desktopHint && !nonDesktop) return 'pcapp'
 
   const exploitTerms = /\b(solara|executor|execute script|exploit|exploiting|inject|injection|infinite yield|hydra|synapse|xeno|fluxus|script hub|auto execute|getgenv|loadstring|hookfunction|roblox admin)\b/
   if (exploitTerms.test(t) || (/\b(roblox|luau)\b/.test(t) && /\b(script|code|lua|luau|obby|game|gui|tool|remote|event|simulator|tycoon|system|mechanic|feature)\b/.test(t))) return 'roblox'
@@ -254,6 +259,55 @@ export async function generateRobloxScript({ apiKey, prompt, attachments = [], s
   const raw = textFromParts(partsOf(payload)) || collectText(payload).join('\n')
   if (!raw) throw new Error('No script came back. Try a clearer request.')
   return { text: raw, media: [] }
+}
+
+const PC_APP_SYSTEM = `You are an expert Windows desktop app developer. Build a complete, working Electron application for Windows PC.
+
+Return ONLY one JSON object — no markdown fences, no text before or after — with this exact shape:
+{"name":"App Name","description":"One sentence about what it does.","files":{"package.json":"...","main.js":"...","index.html":"...","renderer.js":"...","README.md":"..."}}
+
+Requirements:
+- package.json uses Electron, with scripts "start": "electron ." and "dist": "electron-builder --win", and electron-builder config targeting Windows nsis and portable.
+- main.js creates a BrowserWindow with contextIsolation true and nodeIntegration false.
+- index.html is the complete UI with inline modern CSS, no external assets. It loads renderer.js with a normal script tag.
+- renderer.js wires up all UI behavior using only browser APIs. No remote code loading, no eval, no direct require of Node modules.
+- README.md gives exact steps: npm install, npm start, npm run dist, and where the Windows .exe installer appears.
+- Escape newlines and quotes correctly so the whole response is valid parseable JSON.
+- Make the app polished and genuinely useful for the request. Keep the whole JSON under 25,000 characters.`
+
+function parseProjectJson(raw) {
+  let text = String(raw || '').trim()
+  const first = text.indexOf('{')
+  if (first > 0) text = text.slice(first)
+  const fence = text.lastIndexOf('```')
+  if (fence > 0) text = text.slice(0, fence)
+  return JSON.parse(text.trim())
+}
+
+export async function generatePcApp({ apiKey, prompt, attachments = [], signal }) {
+  const parts = [{ text: `Build a Windows PC desktop app for this request:\n\n${prompt}` }]
+  for (const a of attachments || []) {
+    if (a?.data) parts.push({ inlineData: { mimeType: a.mimeType || 'image/png', data: a.data } })
+  }
+  const body = {
+    systemInstruction: { parts: [{ text: PC_APP_SYSTEM }] },
+    contents: [{ parts }],
+    generationConfig: { temperature: 0.3, maxOutputTokens: 32768 },
+  }
+  const payload = await apiFetch(`${API}/v1/models/${GEMINI_MODEL}:generateContent`, apiKey, { method: 'POST', body: JSON.stringify(body) }, signal)
+  const raw = textFromParts(partsOf(payload)) || collectText(payload).join('\n')
+  let project
+  try { project = parseProjectJson(raw) } catch { throw new Error('The app project came back malformed. Try the request again.') }
+  const files = project?.files && typeof project.files === 'object' ? project.files : null
+  if (!files?.['package.json'] || !files?.['main.js'] || !files?.['index.html']) {
+    throw new Error('The app project was incomplete. Try a clearer request.')
+  }
+  const name = String(project.name || 'PC App').trim()
+  return {
+    text: `**${name}** — Windows desktop app project ready.\n\n${project.description || 'Download the ZIP, then follow the README inside it to build your .exe.'}`,
+    media: [],
+    pcApp: { name, description: project.description || '', files },
+  }
 }
 
 const wait = (ms, signal) => new Promise((resolve, reject) => {

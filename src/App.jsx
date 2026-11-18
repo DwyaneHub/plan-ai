@@ -3,11 +3,12 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
   ArrowUp, Check, Cloud, Copy, Download, ExternalLink, Globe,
-  LogIn, LogOut, Menu, Paperclip, Plus, RefreshCw, Settings, Sparkles, Trash2, X,
+  LogIn, LogOut, Menu, Monitor, Paperclip, Plus, RefreshCw, Settings, Sparkles, Trash2, X,
 } from 'lucide-react'
+import JSZip from 'jszip'
 import { chatWithGemini, getApiKeys, shouldTryNextKey } from './gemini.js'
 import {
-  detectIntent, generateImage, generateMusic, generateRobloxScript, generateVideo,
+  detectIntent, generateImage, generateMusic, generatePcApp, generateRobloxScript, generateVideo,
   generateWebsite, PROMPT_SYSTEM_HINT,
 } from './media.js'
 import {
@@ -242,6 +243,67 @@ function CloudModal({ config, onSave, onClear, onClose, user, onSignIn, onSignOu
   )
 }
 
+function PcAppBlock({ app, onNotify }) {
+  const [url, setUrl] = useState('')
+  const urlRef = useRef('')
+
+  useEffect(() => {
+    let alive = true
+    const zip = new JSZip()
+    Object.entries(app.files || {}).forEach(([name, content]) => zip.file(name, content))
+    zip.generateAsync({ type: 'blob' }).then((blob) => {
+      if (!alive) return
+      const next = URL.createObjectURL(blob)
+      urlRef.current = next
+      setUrl(next)
+    }).catch(() => onNotify?.('Could not build the ZIP'))
+    return () => {
+      alive = false
+      if (urlRef.current) URL.revokeObjectURL(urlRef.current)
+      urlRef.current = ''
+    }
+  }, [app, onNotify])
+
+  const previewHtml = useMemo(() => {
+    let html = String(app.files?.['index.html'] || '')
+    const renderer = String(app.files?.['renderer.js'] || '')
+    html = html.replace(/<script\s+src=["']renderer\.js["']\s*><\/script>/gi, `<script>${renderer}</script>`)
+    return html
+  }, [app])
+
+  const slug = String(app.name || 'pc-app').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'pc-app'
+
+  return (
+    <div className="pcapp-block">
+      <div className="pcapp-head">
+        <span className="pcapp-icon"><Monitor size={17} /></span>
+        <div>
+          <strong>{app.name}</strong>
+          <small>Windows desktop app · Electron project</small>
+        </div>
+      </div>
+      <div className="website-actions">
+        {url ? (
+          <a className="copy-btn always" href={url} download={`${slug}.zip`}><Download size={13} /> Download ZIP</a>
+        ) : (
+          <span className="copy-btn always">Building ZIP…</span>
+        )}
+        <button className="copy-btn always" onClick={() => copyToClipboard(JSON.stringify(app.files, null, 2)).then((ok) => onNotify?.(ok ? 'Project files copied' : 'Copy failed'))}>
+          <Copy size={13} /> Copy files
+        </button>
+      </div>
+      <div className="pcapp-files">
+        {Object.keys(app.files || {}).map((name) => <span key={name}>{name}</span>)}
+      </div>
+      {previewHtml && <iframe title="Desktop app preview" srcDoc={previewHtml} sandbox="allow-scripts" />}
+      <details className="website-source">
+        <summary>Build steps (README)</summary>
+        <pre>{app.files?.['README.md'] || 'No README included.'}</pre>
+      </details>
+    </div>
+  )
+}
+
 function WebsiteBlock({ html }) {
   const url = useMemo(() => URL.createObjectURL(new Blob([html], { type: 'text/html' })), [html])
   useEffect(() => () => URL.revokeObjectURL(url), [url])
@@ -278,7 +340,7 @@ function MediaBlock({ media }) {
   )
 }
 
-function Message({ role, content, media = [], attachments = [], website, kind, onNotify }) {
+function Message({ role, content, media = [], attachments = [], website, pcApp, kind, onNotify }) {
   const copy = async (value, success) => {
     const ok = await copyToClipboard(value)
     onNotify?.(ok ? success : 'Copy failed — select the text manually')
@@ -304,7 +366,7 @@ function Message({ role, content, media = [], attachments = [], website, kind, o
     )
   }
 
-  const body = content && kind !== 'website' ? (
+  const body = content && kind !== 'website' && kind !== 'pcapp' ? (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
       components={{
@@ -332,11 +394,12 @@ function Message({ role, content, media = [], attachments = [], website, kind, o
       <div className="assistant-avatar"><Star size={16} /></div>
       <div className="assistant-body">
         <div className="message-tools">
-          {kind && kind !== 'chat' && <span className="kind-tag">{kind === 'roblox' ? 'Roblox Studio' : kind}</span>}
+          {kind && kind !== 'chat' && <span className="kind-tag">{kind === 'roblox' ? 'Roblox Studio' : kind === 'pcapp' ? 'PC app' : kind}</span>}
           <button className="copy-btn" onClick={() => copy(content, 'Message copied')} title="Copy message"><Copy size={13} /> Copy</button>
         </div>
         {body && <div className="markdown">{body}</div>}
         {kind === 'website' && website && <WebsiteBlock html={website} />}
+        {kind === 'pcapp' && pcApp && <PcAppBlock app={pcApp} onNotify={onNotify} />}
         {media.map((m, i) => <MediaBlock key={i} media={m} />)}
       </div>
     </div>
@@ -613,6 +676,7 @@ export default function App() {
       video: 'Starting video…',
       music: 'Composing song…',
       website: 'Building website…',
+      pcapp: 'Building Windows app…',
       roblox: 'Writing Roblox Studio script…',
       prompt: 'Writing prompt…',
       chat: 'Thinking…',
@@ -629,6 +693,8 @@ export default function App() {
         result = await runWithKeys((apiKey) => generateVideo({ apiKey, prompt: promptText, onProgress: setProgress }))
       } else if (intent === 'website') {
         result = await runWithKeys((apiKey) => generateWebsite({ apiKey, prompt: promptText, attachments: sentAttachments }))
+      } else if (intent === 'pcapp') {
+        result = await runWithKeys((apiKey) => generatePcApp({ apiKey, prompt: promptText, attachments: sentAttachments }))
       } else if (intent === 'roblox') {
         result = await runWithKeys((apiKey) => generateRobloxScript({ apiKey, prompt: promptText, attachments: sentAttachments }))
       } else {
@@ -659,6 +725,7 @@ export default function App() {
               content: result.text,
               media: result.media || [],
               website: result.website || null,
+              pcApp: result.pcApp || null,
               kind: intent,
               id: `a_${Date.now()}`,
             }],
@@ -804,7 +871,7 @@ export default function App() {
             <div className="welcome">
               <div className="welcome-icon"><Star size={30} /></div>
               <h1>What can I help with?</h1>
-              <p>Chat, images, video, music, websites, Roblox Studio scripts, prompts — just ask.</p>
+              <p>Chat, images, video, music, websites, Windows apps, Roblox Studio scripts — just ask.</p>
               {!hasKey && (
                 <button className="key-prompt" onClick={() => setShowSettings(true)}>
                   Add your Gemini API key to start <ArrowUp size={14} />
@@ -879,7 +946,7 @@ export default function App() {
                 ref={textarea}
                 value={draft}
                 rows={1}
-                placeholder="Ask, attach an image, request a website or Roblox script..."
+                placeholder="Ask, attach an image, request a website, PC app or Roblox script..."
                 onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {

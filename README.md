@@ -10,6 +10,7 @@ Live app: https://dwyanehub.github.io/plan-ai/
 - Markdown rendering (headings, lists, code blocks, tables) with copy buttons
 - Image attachments: paste, drag/drop, or use the paperclip
 - Image, video, music, and website generation from chat
+- **Windows PC app generation** — downloadable Electron project ZIP with build steps to make a .exe
 - **Roblox Studio script mode** — writes legitimate Luau with exact paste/test steps in Studio
 - Multiple Gemini API keys with automatic failover when one is rate-limited
 - Optional Supabase Google sign-in and cloud chat sync (keys never sync)
@@ -28,6 +29,12 @@ A shared Gemini key is built into the app, so it works immediately without setup
 Ask for something like “write a Roblox script that gives the player a sword when they touch a part.” PLAN AI returns working Luau plus a “How to use in Studio” section naming where to paste it and how to test it with Play.
 
 This mode only produces scripts for official Roblox Studio (Script / LocalScript / ModuleScript objects). It does not produce executor/injection scripts.
+
+## Windows app mode
+
+Ask for something like “make a Windows PC app for tracking homework.” PLAN AI generates a complete Electron project — `package.json`, `main.js`, `index.html`, `renderer.js`, and a `README.md` — as a downloadable ZIP, with a preview of the UI.
+
+Unzip it, run `npm install`, then `npm start` to try it. Run `npm run dist` to build a Windows `.exe` installer.
 
 ## Install the app
 
