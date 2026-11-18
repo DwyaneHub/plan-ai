@@ -7,7 +7,7 @@ import {
 } from 'lucide-react'
 import { chatWithGemini, getApiKeys, shouldTryNextKey } from './gemini.js'
 import {
-  detectIntent, generateImage, generateMusic, generateVideo,
+  detectIntent, generateImage, generateMusic, generateRobloxScript, generateVideo,
   generateWebsite, PROMPT_SYSTEM_HINT,
 } from './media.js'
 import {
@@ -119,7 +119,6 @@ function SettingsModal({ settings, onChange, onClose, onClear }) {
   const keysText = Array.isArray(settings.apiKeys)
     ? settings.apiKeys.join('\n')
     : (settings.apiKey || '')
-  const keyCount = getApiKeys(settings).length
 
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
@@ -147,7 +146,7 @@ function SettingsModal({ settings, onChange, onClose, onClear }) {
             autoFocus
           />
           <small>
-            {keyCount ? `${keyCount} key${keyCount > 1 ? 's' : ''} loaded. ` : ''}
+            A shared key is built in, so the app works without setup. Add your own keys for higher limits and failover.{' '}
             Get keys at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">aistudio.google.com/apikey</a>
           </small>
         </label>
@@ -333,7 +332,7 @@ function Message({ role, content, media = [], attachments = [], website, kind, o
       <div className="assistant-avatar"><Star size={16} /></div>
       <div className="assistant-body">
         <div className="message-tools">
-          {kind && kind !== 'chat' && <span className="kind-tag">{kind}</span>}
+          {kind && kind !== 'chat' && <span className="kind-tag">{kind === 'roblox' ? 'Roblox Studio' : kind}</span>}
           <button className="copy-btn" onClick={() => copy(content, 'Message copied')} title="Copy message"><Copy size={13} /> Copy</button>
         </div>
         {body && <div className="markdown">{body}</div>}
@@ -614,6 +613,7 @@ export default function App() {
       video: 'Starting video…',
       music: 'Composing song…',
       website: 'Building website…',
+      roblox: 'Writing Roblox Studio script…',
       prompt: 'Writing prompt…',
       chat: 'Thinking…',
     }
@@ -629,6 +629,8 @@ export default function App() {
         result = await runWithKeys((apiKey) => generateVideo({ apiKey, prompt: promptText, onProgress: setProgress }))
       } else if (intent === 'website') {
         result = await runWithKeys((apiKey) => generateWebsite({ apiKey, prompt: promptText, attachments: sentAttachments }))
+      } else if (intent === 'roblox') {
+        result = await runWithKeys((apiKey) => generateRobloxScript({ apiKey, prompt: promptText, attachments: sentAttachments }))
       } else {
         let apiMessages = messages
         if (intent === 'prompt') {
@@ -802,7 +804,7 @@ export default function App() {
             <div className="welcome">
               <div className="welcome-icon"><Star size={30} /></div>
               <h1>What can I help with?</h1>
-              <p>Chat, images, video, music, websites, prompts — just ask.</p>
+              <p>Chat, images, video, music, websites, Roblox Studio scripts, prompts — just ask.</p>
               {!hasKey && (
                 <button className="key-prompt" onClick={() => setShowSettings(true)}>
                   Add your Gemini API key to start <ArrowUp size={14} />
@@ -877,7 +879,7 @@ export default function App() {
                 ref={textarea}
                 value={draft}
                 rows={1}
-                placeholder="Ask, attach an image, or request a website..."
+                placeholder="Ask, attach an image, request a website or Roblox script..."
                 onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {

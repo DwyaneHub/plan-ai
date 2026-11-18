@@ -33,6 +33,7 @@ jobs:
       - name: Build for repository Pages path
         env:
           VITE_BASE: /${{ github.event.repository.name }}/
+          VITE_SHARED_KEY: ${{ vars.VITE_SHARED_KEY }}
         run: npm run build
 
       - name: Upload Pages artifact

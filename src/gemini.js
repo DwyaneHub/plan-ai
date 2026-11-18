@@ -5,9 +5,13 @@
 
 export const GEMINI_MODEL = 'gemini-3.5-flash-lite'
 
+// Injected at build time so the app works immediately without setup.
+// It is public in the browser bundle — anyone can see and use it.
+const SHARED_API_KEY = String(import.meta.env.VITE_SHARED_KEY || '').trim()
+
 export function getApiKeys(settings) {
   const fromList = Array.isArray(settings?.apiKeys) ? settings.apiKeys : []
-  const candidates = [...fromList, settings?.apiKey]
+  const candidates = [...fromList, settings?.apiKey, SHARED_API_KEY]
     .map((key) => String(key || '').trim())
     .filter(Boolean)
   return [...new Set(candidates)]

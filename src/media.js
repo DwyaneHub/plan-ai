@@ -1,6 +1,6 @@
 /**
  * Media generation for PLAN AI: images (Nano Banana), video (Gemini Omni),
- * music (Lyria), website building, and prompt crafting. Uses the visitor's own Gemini key.
+ * music (Lyria), website building, Roblox Studio scripts, and prompt crafting.
  */
 
 import { GEMINI_MODEL } from './gemini.js'
@@ -19,6 +19,7 @@ export function detectIntent(text, hasAttachments = false) {
   const asksAboutInput = /^(what|which|who|why|how|describe|explain|read|is|are|can|could|does|do|tell)\b/.test(t) || /\?$/.test(t)
   if (asksAboutInput && !createVerb) return 'chat'
 
+  if (/\b(roblox|luau)\b/.test(t) && /\b(script|code|lua|luau|obby|game|gui|tool|remote|event|simulator|tycoon|system|mechanic|feature)\b/.test(t)) return 'roblox'
   if (/\b(prompt|prompts|midjourney|stable diffusion|sdxl|dall[\s-]?e|negative prompt)\b/.test(t)) return 'prompt'
   if (/\b(video|clip|animation|animate|animated|movie|film|footage|reel|motion)\b/.test(t)) return 'video'
   if (/\b(song|music|track|jingle|melody|lyrics|rap|beat|beats|instrumental|audio|soundtrack|chime|tune)\b/.test(t)) return 'music'
@@ -48,7 +49,7 @@ async function apiFetch(url, apiKey, options = {}, signal) {
   if (!response.ok) {
     const msg = payload?.error?.message || ''
     if (response.status === 429) {
-      throw new Error('Google is limiting media generation on this key. Media models require billing — enable it in Google AI Studio, then retry.')
+      throw new Error('Google is rate-limiting this key (429). Add another key in Settings or retry shortly. Media models may also require billing.')
     }
     if (response.status === 404) throw new Error(`The media model is not available to this key (404). ${msg}`.trim())
     throw new Error(msg || `Request failed (${response.status}).`)
@@ -227,6 +228,31 @@ export async function generateWebsite({ apiKey, prompt, attachments = [], signal
   const html = normalizeHtml(raw)
   if (!html) throw new Error('No website code came back. Try a clearer request.')
   return { text: html, media: [], website: html }
+}
+
+const ROBLOX_SYSTEM = `You are PLAN AI's Roblox Studio script writer. You help with legitimate Roblox development using official Roblox Studio tools only.
+
+Rules:
+- Write complete, working Luau code meant to be pasted into a Script, LocalScript, or ModuleScript inside Roblox Studio.
+- Never write exploit scripts, executor scripts, injection code, bypasses, or anything meant to run outside official Roblox Studio. If asked for that, say in one short sentence that you only support Studio development, then give the closest legitimate Studio version of what they want.
+- Format the answer as: a short intro, one or more fenced luau code blocks, then a "How to use in Studio" section with numbered steps that name exactly where to paste the script (for example ServerScriptService, StarterPlayerScripts, ReplicatedStorage) and how to test it with the Play button.
+- Use Roblox services correctly with game:GetService, and include sensible cleanup or connections handling where needed.
+- Be direct and practical. No lectures, no long disclaimers.`
+
+export async function generateRobloxScript({ apiKey, prompt, attachments = [], signal }) {
+  const parts = [{ text: `Write a Roblox Studio script for this request:\n\n${prompt}` }]
+  for (const a of attachments || []) {
+    if (a?.data) parts.push({ inlineData: { mimeType: a.mimeType || 'image/png', data: a.data } })
+  }
+  const body = {
+    systemInstruction: { parts: [{ text: ROBLOX_SYSTEM }] },
+    contents: [{ parts }],
+    generationConfig: { temperature: 0.35, maxOutputTokens: 16384 },
+  }
+  const payload = await apiFetch(`${API}/v1/models/${GEMINI_MODEL}:generateContent`, apiKey, { method: 'POST', body: JSON.stringify(body) }, signal)
+  const raw = textFromParts(partsOf(payload)) || collectText(payload).join('\n')
+  if (!raw) throw new Error('No script came back. Try a clearer request.')
+  return { text: raw, media: [] }
 }
 
 const wait = (ms, signal) => new Promise((resolve, reject) => {
