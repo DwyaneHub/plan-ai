@@ -1,39 +1,28 @@
 # PLAN AI
 
-A self-contained AI planning app built with React + Vite. It runs its own local model entirely in the browser — **no API key, no account, no external endpoint, no content filters**.
+A clean, Claude-style AI chat that runs in your browser, powered by your own Gemini API key.
 
-## What it does
+## Features
 
-Give it any goal and it returns a structured roadmap:
+- Simple chat interface with streaming responses
+- Multiple saved conversations in the sidebar
+- Markdown rendering (headings, lists, code blocks, tables)
+- Your Gemini API key is stored only in your browser's localStorage
+- No backend, no account, no telemetry
 
-- Detects the domain (learning, fitness, business, coding, travel, finance, creative, lifestyle, general)
-- Extracts constraints like duration, daily hours, and experience level from your prompt
-- Builds phased execution steps, milestones, risk radar, and field notes
-- Reveals the result progressively with an on-device "reasoning" animation
-- Saves plans locally and lets you copy or download them as Markdown
-
-## Privacy / model notes
-
-`src/engine.js` is the model. It is a custom deterministic planner: intent parsing, constraint extraction, domain routing, and weighted plan assembly with seeded variation. It never calls `fetch`, needs no credentials, and sends nothing anywhere. The "unrestricted" setting means there is no moderation/gatekeeping layer in the app — every prompt produces a plan.
-
-## Run it
+## Run locally
 
 ```bash
 npm install
 npm run dev
 ```
 
-Open http://localhost:5173
+Open the URL Vite prints. Click **API key** in the bottom-left of the sidebar and paste a Gemini key from [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
 
-## Build
+## Deploy
 
-```bash
-npm run build
-npm run preview
-```
+Pushes to `main` are deployed to GitHub Pages by `.github/workflows/deploy.yml`.
 
-## Keyboard shortcuts
+## Stack
 
-- `Enter` — generate plan
-- `Shift + Enter` — newline
-- `Cmd/Ctrl + N` — new plan
+React + Vite, Gemini `generateContent` / `streamGenerateContent` API, `react-markdown`.
