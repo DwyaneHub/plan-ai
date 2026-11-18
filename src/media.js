@@ -263,8 +263,25 @@ export async function generateRobloxScript({ apiKey, prompt, attachments = [], s
 
 const PC_APP_SYSTEM = `You are an expert Windows desktop app developer. Build a complete, working Electron application for Windows PC.
 
-Return ONLY one JSON object — no markdown fences, no text before or after — with this exact shape:
-{"name":"App Name","description":"One sentence about what it does.","files":{"package.json":"...","main.js":"...","index.html":"...","renderer.js":"...","README.md":"..."}}
+Return ONLY plain text in this exact format. No markdown fences, no text outside the blocks.
+
+NAME: App Name
+DESC: One sentence about what it does.
+===FILE: package.json===
+full file contents
+===END===
+===FILE: main.js===
+full file contents
+===END===
+===FILE: index.html===
+full file contents
+===END===
+===FILE: renderer.js===
+full file contents
+===END===
+===FILE: README.md===
+full file contents
+===END===
 
 Requirements:
 - package.json uses Electron, with scripts "start": "electron ." and "dist": "electron-builder --win", and electron-builder config targeting Windows nsis and portable.
@@ -272,16 +289,21 @@ Requirements:
 - index.html is the complete UI with inline modern CSS, no external assets. It loads renderer.js with a normal script tag.
 - renderer.js wires up all UI behavior using only browser APIs. No remote code loading, no eval, no direct require of Node modules.
 - README.md gives exact steps: npm install, npm start, npm run dist, and where the Windows .exe installer appears.
-- Escape newlines and quotes correctly so the whole response is valid parseable JSON.
-- Make the app polished and genuinely useful for the request. Keep the whole JSON under 25,000 characters.`
+- Write raw file contents between the markers. Do not escape newlines or quotes. Do not wrap files in code fences.
+- Keep every file complete and working. Keep the whole response under 18,000 characters.`
 
-function parseProjectJson(raw) {
-  let text = String(raw || '').trim()
-  const first = text.indexOf('{')
-  if (first > 0) text = text.slice(first)
-  const fence = text.lastIndexOf('```')
-  if (fence > 0) text = text.slice(0, fence)
-  return JSON.parse(text.trim())
+function parseProject(raw) {
+  const text = String(raw || '')
+    .split('\n')
+    .filter((line) => !line.trim().startsWith('```'))
+    .join('\n')
+  const name = text.match(/^NAME:\s*(.+)$/im)?.[1]?.trim() || 'PC App'
+  const description = text.match(/^DESC:\s*(.+)$/im)?.[1]?.trim() || ''
+  const files = {}
+  const re = /===FILE:\s*([^\n=]+)===\s*\n([\s\S]*?)\n===END===/g
+  let match
+  while ((match = re.exec(text))) files[match[1].trim()] = match[2].trim()
+  return { name, description, files }
 }
 
 export async function generatePcApp({ apiKey, prompt, attachments = [], signal }) {
@@ -296,13 +318,16 @@ export async function generatePcApp({ apiKey, prompt, attachments = [], signal }
   }
   const payload = await apiFetch(`${API}/v1/models/${GEMINI_MODEL}:generateContent`, apiKey, { method: 'POST', body: JSON.stringify(body) }, signal)
   const raw = textFromParts(partsOf(payload)) || collectText(payload).join('\n')
-  let project
-  try { project = parseProjectJson(raw) } catch { throw new Error('The app project came back malformed. Try the request again.') }
-  const files = project?.files && typeof project.files === 'object' ? project.files : null
-  if (!files?.['package.json'] || !files?.['main.js'] || !files?.['index.html']) {
+  const project = parseProject(raw)
+  const files = project.files
+  if (!files['package.json'] || !files['main.js'] || !files['index.html']) {
     throw new Error('The app project was incomplete. Try a clearer request.')
   }
-  const name = String(project.name || 'PC App').trim()
+  if (!files['renderer.js']) files['renderer.js'] = "// Add your app logic here.\nconsole.log('App ready')\n"
+  if (!files['README.md']) {
+    files['README.md'] = `# ${project.name}\n\n1. Unzip this folder.\n2. Run \`npm install\`.\n3. Run \`npm start\` to try the app.\n4. Run \`npm run dist\` to build a Windows installer in the \`dist\` folder.\n`
+  }
+  const name = project.name
   return {
     text: `**${name}** — Windows desktop app project ready.\n\n${project.description || 'Download the ZIP, then follow the README inside it to build your .exe.'}`,
     media: [],
