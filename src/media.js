@@ -175,15 +175,27 @@ export async function generateMusic({ apiKey, prompt, attachments = [], signal }
 const WEBSITE_SYSTEM = `You are an expert web developer. Build a complete, polished, single-file website.
 Return ONLY one self-contained HTML document with inline <style> and <script> blocks.
 No markdown fences, no explanations, no notes before or after the HTML.
+Keep the whole document under 25,000 characters so it always finishes. Never stop in the middle of a tag.
 Make it responsive, accessible, visually refined, and actually usable. Use no external assets unless they are loaded from a public CDN.`
+
+function closeTagPair(html, tag) {
+  const opens = (html.match(new RegExp(`<${tag}\\b`, 'gi')) || []).length
+  const closes = (html.match(new RegExp(`</${tag}>`, 'gi')) || []).length
+  return html + `</${tag}>`.repeat(Math.max(0, opens - closes))
+}
 
 function normalizeHtml(raw) {
   let html = String(raw || '').trim()
-  const fenced = html.match(/```(?:html|htm)?\s*([\s\S]*?)```/i)
-  if (fenced) html = fenced[1].trim()
+  const fenceAt = html.indexOf('```')
+  if (fenceAt !== -1) {
+    let inside = html.slice(fenceAt + 3).replace(/^(?:html|htm)?\s*/i, '')
+    const closeAt = inside.lastIndexOf('```')
+    html = (closeAt !== -1 ? inside.slice(0, closeAt) : inside).trim()
+  }
   if (!html) return ''
-  if (/^\s*<!doctype|<html[\s>]/i.test(html)) return html
-  return `<!doctype html>
+  html = html.replace(/<[^>]*$/, '').trim()
+  if (!/^\s*<!doctype|<html[\s>]/i.test(html)) {
+    html = `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -191,9 +203,13 @@ function normalizeHtml(raw) {
   <title>PLAN AI Website</title>
 </head>
 <body>
-${html}
-</body>
-</html>`
+${html}`
+  }
+  html = closeTagPair(html, 'style')
+  html = closeTagPair(html, 'script')
+  html = closeTagPair(html, 'body')
+  html = closeTagPair(html, 'html')
+  return html
 }
 
 export async function generateWebsite({ apiKey, prompt, attachments = [], signal }) {
@@ -204,7 +220,7 @@ export async function generateWebsite({ apiKey, prompt, attachments = [], signal
   const body = {
     systemInstruction: { parts: [{ text: WEBSITE_SYSTEM }] },
     contents: [{ parts }],
-    generationConfig: { temperature: 0.35, maxOutputTokens: 16384 },
+    generationConfig: { temperature: 0.35, maxOutputTokens: 32768 },
   }
   const payload = await apiFetch(`${API}/v1/models/${GEMINI_MODEL}:generateContent`, apiKey, { method: 'POST', body: JSON.stringify(body) }, signal)
   const raw = textFromParts(partsOf(payload)) || collectText(payload).join('\n')
