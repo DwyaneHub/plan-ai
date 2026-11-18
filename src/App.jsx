@@ -329,7 +329,7 @@ export default function App() {
     setStreamText('')
     setProgress('')
 
-    const intent = text ? detectIntent(text) : 'chat'
+    const intent = text ? detectIntent(text, sentAttachments.length > 0) : 'chat'
     const labels = {
       image: 'Generating image…',
       video: 'Starting video…',

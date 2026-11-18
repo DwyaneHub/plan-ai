@@ -11,12 +11,17 @@ export const MEDIA_MODELS = {
   music: 'lyria-3.5',
 }
 
-export function detectIntent(text) {
-  const t = String(text || '').toLowerCase()
+export function detectIntent(text, hasAttachments = false) {
+  const t = String(text || '').toLowerCase().trim()
+  const createVerb = /\b(generate|make|create|draw|design|produce|render|paint|sketch|compose|write|animate|turn|convert|edit|change|transform)\b/.test(t)
+  const asksAboutInput = /^(what|which|who|why|how|describe|explain|read|is|are|can|could|does|do|tell)\b/.test(t) || /\?$/.test(t)
+  if (asksAboutInput && !createVerb) return 'chat'
+
   if (/\b(prompt|prompts|midjourney|stable diffusion|sdxl|dall[\s-]?e|negative prompt)\b/.test(t)) return 'prompt'
   if (/\b(video|clip|animation|animate|animated|movie|film|footage|reel|motion)\b/.test(t)) return 'video'
-  if (/\b(image|images|picture|photo|draw|drawing|illustration|artwork|logo|poster|wallpaper|portrait|sketch|render|visual)\b/.test(t)) return 'image'
   if (/\b(song|music|track|jingle|melody|lyrics|rap|beat|beats|instrumental|audio|soundtrack|chime|tune)\b/.test(t)) return 'music'
+  if (/\b(image|images|picture|photo|draw|drawing|illustration|artwork|logo|poster|wallpaper|portrait|sketch|render|visual)\b/.test(t)) return 'image'
+  if (hasAttachments && createVerb) return 'image'
   return 'chat'
 }
 
