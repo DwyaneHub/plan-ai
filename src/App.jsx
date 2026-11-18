@@ -1,37 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import {
-  Activity, AlertTriangle, ArrowUp, BookOpen, Briefcase, Check, CheckCircle2,
-  ChevronRight, Clock, Code2, Compass, Copy, Cpu, Download, History, Layers,
-  Lightbulb, Map, Menu, Plus, RotateCcw, Settings, ShieldOff, Sparkles, Sun,
-  Target, Trash2, Wallet, WifiOff, X, Zap,
-} from 'lucide-react'
-import { EXAMPLES, generatePlan, planToMarkdown } from './engine.js'
-import { callGemini, GEMINI_MODELS } from './gemini.js'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import { ArrowUp, Check, Menu, Plus, Settings, Sparkles, Trash2, X } from 'lucide-react'
+import { chatWithGemini } from './gemini.js'
 
-const DOMAIN_ICONS = {
-  study: BookOpen, fitness: Activity, business: Briefcase, coding: Code2,
-  travel: Map, finance: Wallet, creative: Sparkles, daily: Sun, general: Compass,
-}
-
-const THINKING = [
-  'Reading your objective…',
-  'Extracting constraints & intent…',
-  'Selecting the planning domain…',
-  'Sequencing phases and milestones…',
-  'Running local inference…',
-  'Formatting your roadmap…',
-]
-
-const DEFAULT_SETTINGS = {
-  days: '',
-  hours: 1,
-  level: 'adaptive',
-  localOnly: true,
-  filtersOff: true,
-  engine: 'local',
-  apiKey: '',
-  geminiModel: GEMINI_MODELS[0].id,
-}
+const CHATS_KEY = 'planai.chats'
+const ACTIVE_KEY = 'planai.activeId'
+const SETTINGS_KEY = 'planai.settings'
 
 function loadJSON(key, fallback) {
   try {
@@ -42,530 +17,258 @@ function loadJSON(key, fallback) {
   }
 }
 
-function Logo({ compact = false }) {
+function Star({ size = 20, className = '' }) {
   return (
-    <div className="brand">
-      <div className="brand-mark" aria-hidden="true">
-        <svg viewBox="0 0 40 40" fill="none">
-          <path d="M12 31V9h10a7 7 0 0 1 0 14H12" stroke="currentColor" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round" />
-          <circle cx="28" cy="28" r="3" fill="currentColor" opacity=".75" />
-        </svg>
-      </div>
-      {!compact && (
-        <div className="brand-text">
-          <span>PLAN<span className="brand-ai">AI</span></span>
-          <small>LOCAL INTELLIGENCE</small>
-        </div>
-      )}
-    </div>
+    <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M12 1.6c.5 0 .9.35 1.03.84l1.2 4.55c.18.7.73 1.25 1.43 1.43l4.55 1.2a1.06 1.06 0 0 1 0 2.06l-4.55 1.2c-.7.18-1.25.73-1.43 1.43l-1.2 4.55a1.06 1.06 0 0 1-2.06 0l-1.2-4.55c-.18-.7-.73-1.25-1.43-1.43l-4.55-1.2a1.06 1.06 0 0 1 0-2.06l4.55-1.2c.7-.18 1.25-.73 1.43-1.43l1.2-4.55c.13-.49.53-.84 1.03-.84Z" />
+      <path d="M19.4 15.1c.3 0 .55.2.63.49l.42 1.63c.1.4.4.7.8.8l1.63.42a.64.64 0 0 1 0 1.24l-1.63.42c-.4.1-.7.4-.8.8l-.42 1.63a.64.64 0 0 1-1.24 0l-.42-1.63c-.1-.4-.4-.7-.8-.8l-1.63-.42a.64.64 0 0 1 0-1.24l1.63-.42c.4-.1.7-.4.8-.8l.42-1.63c.08-.29.33-.49.63-.49Z" opacity=".7" />
+    </svg>
   )
 }
 
-function Thinking({ stage }) {
-  return (
-    <div className="thinking card">
-      <div className="thinking-head">
-        <span className="thinking-orb"><Sparkles size={15} /></span>
-        <div>
-          <strong>PLAN AI is reasoning</strong>
-          <span className="thinking-sub">On-device · no API key · no data leaves this tab</span>
-        </div>
-      </div>
-      <div className="thinking-steps">
-        {THINKING.map((step, i) => (
-          <div key={step} className={`thinking-step ${i === stage ? 'active' : ''} ${i < stage ? 'done' : ''}`}>
-            <span className="step-dot">{i < stage ? <Check size={11} /> : null}</span>
-            <span>{step}</span>
-          </div>
-        ))}
-      </div>
-      <div className="thinking-bar"><span /></div>
-    </div>
-  )
-}
-
-function PlanDocument({ plan, reveal, onCopy, onDownload, onRegenerate }) {
-  const Icon = DOMAIN_ICONS[plan.domain] || Compass
-  const total = plan.phases.length + plan.milestones.length + plan.risks.length + plan.tips.length
-  let cursor = 0
-  const take = () => cursor++
-
-  return (
-    <article className="plan-doc card" style={{ '--accent': plan.accent }}>
-      <header className="plan-header">
-        <div className="plan-topline">
-          <span className="domain-chip"><Icon size={14} /> {plan.domainLabel.toUpperCase()}</span>
-          <span className="model-chip"><Cpu size={12} /> {plan.model}</span>
-        </div>
-        <h2>{plan.title}</h2>
-        <p className="plan-summary">{plan.summary}</p>
-        <div className="stat-row">
-          <div className="stat"><Layers size={16} /><span><b>{plan.stats.phases}</b> phases</span></div>
-          <div className="stat"><CheckCircle2 size={16} /><span><b>{plan.stats.tasks}</b> actions</span></div>
-          <div className="stat"><Clock size={16} /><span><b>{plan.stats.hours}h</b> est. work</span></div>
-          <div className="stat"><Target size={16} /><span><b>{plan.confidence}%</b> confidence</span></div>
-        </div>
-      </header>
-
-      <section className="doc-section">
-        <div className="section-heading">
-          <span className="section-index">01</span>
-          <h3>Execution roadmap</h3>
-          <span className="section-line" />
-        </div>
-        <div className="phase-list">
-          {plan.phases.map((phase, i) => {
-            const idx = take()
-            if (idx >= reveal) return <div key={phase.id} className="phase-skeleton" />
-            return (
-              <div className="phase" key={phase.id} style={{ animationDelay: `${i * 40}ms` }}>
-                <div className="phase-rail">
-                  <span className="phase-num">{String(i + 1).padStart(2, '0')}</span>
-                  <span className="phase-connector" />
-                </div>
-                <div className="phase-body">
-                  <div className="phase-title">
-                    <h4>{phase.name}</h4>
-                    <span className="phase-focus">{phase.focus}</span>
-                    <span className="phase-share">{phase.share}%</span>
-                  </div>
-                  <div className="phase-progress"><span style={{ width: `${phase.share}%` }} /></div>
-                  <ul className="task-list">
-                    {phase.tasks.map((task, ti) => (
-                      <li key={ti}><span className="task-box" />{task}</li>
-                    ))}
-                  </ul>
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      </section>
-
-      <section className="doc-section">
-        <div className="section-heading">
-          <span className="section-index">02</span>
-          <h3>Milestones</h3>
-          <span className="section-line" />
-        </div>
-        <div className="milestone-grid">
-          {plan.milestones.map((m, i) => {
-            const idx = take()
-            if (idx >= reveal) return null
-            return (
-              <div className="milestone" key={m}>
-                <span className="milestone-dot" />
-                <span>{m}</span>
-                <small>M{i + 1}</small>
-              </div>
-            )
-          })}
-        </div>
-      </section>
-
-      <div className="doc-split">
-        <section className="doc-section compact">
-          <div className="section-heading">
-            <span className="section-index">03</span>
-            <h3>Risk radar</h3>
-          </div>
-          <ul className="plain-list risk">
-            {plan.risks.map((r, i) => {
-              const idx = take()
-              return idx < reveal ? <li key={i}><AlertTriangle size={14} /> {r}</li> : null
-            })}
-          </ul>
-        </section>
-        <section className="doc-section compact">
-          <div className="section-heading">
-            <span className="section-index">04</span>
-            <h3>Field notes</h3>
-          </div>
-          <ul className="plain-list tip">
-            {plan.tips.map((t, i) => {
-              const idx = take()
-              return idx < reveal ? <li key={i}><Lightbulb size={14} /> {t}</li> : null
-            })}
-          </ul>
-        </section>
-      </div>
-
-      <footer className="plan-footer">
-        <div className="footer-meta">
-          <WifiOff size={13} /> Generated offline · {plan.duration} · {plan.hours}h blocks · {plan.level} level
-        </div>
-        <div className="footer-actions">
-          <button className="icon-btn" onClick={onCopy} title="Copy as Markdown"><Copy size={15} /></button>
-          <button className="icon-btn" onClick={onDownload} title="Download .md"><Download size={15} /></button>
-          <button className="icon-btn" onClick={onRegenerate} title="Regenerate"><RotateCcw size={15} /></button>
-        </div>
-        {reveal < total && <div className="reveal-hint">Rendering {reveal}/{total}…</div>}
-      </footer>
-    </article>
-  )
+function groupChats(chats) {
+  const groups = { Today: [], Yesterday: [], Earlier: [] }
+  const today = new Date()
+  const yesterday = new Date(today)
+  yesterday.setDate(yesterday.getDate() - 1)
+  chats.forEach((c) => {
+    const d = new Date(c.createdAt)
+    const label = d.toDateString() === today.toDateString()
+      ? 'Today'
+      : d.toDateString() === yesterday.toDateString() ? 'Yesterday' : 'Earlier'
+    groups[label].push(c)
+  })
+  return groups
 }
 
 function SettingsModal({ settings, onChange, onClose, onClear }) {
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
-      <div className="modal card" onMouseDown={(e) => e.stopPropagation()}>
+      <div className="modal" onMouseDown={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
         <div className="modal-head">
-          <div>
-            <span className="modal-kicker">ENGINE CONFIG</span>
-            <h3>Model settings</h3>
-          </div>
-          <button className="icon-btn" onClick={onClose}><X size={17} /></button>
+          <h2>API key</h2>
+          <button className="icon-btn" onClick={onClose} aria-label="Close"><X size={18} /></button>
         </div>
-
-        <div className="engine-banner">
-          <Cpu size={20} />
-          <div>
-            <strong>PLAN-AI / {settings.engine === 'gemini' ? 'Gemini' : 'local-v1'}</strong>
-            <span>{settings.engine === 'gemini' ? 'Runs on Gemini using your own API key, from your browser.' : 'Runs in your browser. Zero requests sent anywhere.'}</span>
-          </div>
-          <span className="live-dot" />
-        </div>
-
+        <p className="modal-intro">
+          PLAN AI runs on Gemini. Your key is saved only in this browser and is sent directly to Google — never to us.
+        </p>
         <label className="field">
-          <span>Planning engine</span>
-          <select value={settings.engine || 'local'} onChange={(e) => onChange({ ...settings, engine: e.target.value })}>
-            <option value="local">Your own model — local PLAN-AI (offline)</option>
-            <option value="gemini">Gemini API — bring your own key</option>
-          </select>
+          <span>Gemini API key</span>
+          <input
+            type="password"
+            autoComplete="off"
+            spellCheck="false"
+            placeholder="AQ.... or AIza..."
+            value={settings.apiKey || ''}
+            onChange={(e) => onChange({ ...settings, apiKey: e.target.value })}
+            autoFocus
+          />
+          <small>
+            Get a free key at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">aistudio.google.com/apikey</a>
+          </small>
         </label>
-
-        {settings.engine === 'gemini' && (
-          <>
-            <label className="field">
-              <span>Gemini API key <em>stored only in this browser</em></span>
-              <input
-                type="password"
-                autoComplete="off"
-                placeholder="AIza... or AQ...."
-                value={settings.apiKey || ''}
-                onChange={(e) => onChange({ ...settings, apiKey: e.target.value })}
-              />
-              <small className="field-help">
-                Get a key at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">aistudio.google.com/apikey</a>.
-                It never leaves this tab except to call Google directly.
-              </small>
-            </label>
-            <label className="field">
-              <span>Gemini model</span>
-              <select value={settings.geminiModel || GEMINI_MODELS[0].id}
-                onChange={(e) => onChange({ ...settings, geminiModel: e.target.value })}>
-                {GEMINI_MODELS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
-              </select>
-            </label>
-          </>
-        )}
-
-        <label className="field">
-          <span>Default duration <em>{settings.days || 'auto'} days</em></span>
-          <input type="number" min="7" max="730" placeholder="Auto-detect from prompt" value={settings.days}
-            onChange={(e) => onChange({ ...settings, days: e.target.value })} />
-        </label>
-
-        <label className="field">
-          <span>Focus hours per block <em>{settings.hours}h</em></span>
-          <input type="range" min="0.5" max="6" step="0.5" value={settings.hours}
-            onChange={(e) => onChange({ ...settings, hours: Number(e.target.value) })} />
-        </label>
-
-        <label className="field">
-          <span>Experience level</span>
-          <select value={settings.level} onChange={(e) => onChange({ ...settings, level: e.target.value })}>
-            <option value="adaptive">Adaptive (detect from prompt)</option>
-            <option value="beginner">Beginner</option>
-            <option value="intermediate">Intermediate</option>
-            <option value="advanced">Advanced</option>
-          </select>
-        </label>
-
-        <div className="toggle-row">
-          <div><ShieldOff size={16} /><span><strong>Unrestricted mode</strong><small>No topic filters. Every prompt gets a plan.</small></span></div>
-          <span className="switch on"><i /></span>
-        </div>
-        <div className="toggle-row">
-          <div><WifiOff size={16} /><span><strong>{settings.engine === 'gemini' ? 'Gemini via your API key' : 'Local inference only'}</strong><small>{settings.engine === 'gemini' ? 'Your key is stored in this browser only.' : 'No API key, no external endpoint.'}</small></span></div>
-          <span className="switch on"><i /></span>
-        </div>
-
-        <button className="danger-btn" onClick={onClear}><Trash2 size={15} /> Clear saved plans & settings</button>
+        <button className="primary-btn" onClick={onClose}>Done</button>
+        <button className="danger-link" onClick={onClear}><Trash2 size={14} /> Clear all chats and key</button>
       </div>
     </div>
   )
 }
 
+function Message({ role, content }) {
+  const body = (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        a: ({ node, ...props }) => <a {...props} target="_blank" rel="noreferrer" />,
+      }}
+    >
+      {content}
+    </ReactMarkdown>
+  )
+  if (role === 'user') {
+    return (
+      <div className="message user">
+        <div className="user-bubble">{content}</div>
+      </div>
+    )
+  }
+  return (
+    <div className="message assistant">
+      <div className="assistant-avatar"><Star size={16} /></div>
+      <div className="markdown">{body}</div>
+    </div>
+  )
+}
+
 export default function App() {
-  const [input, setInput] = useState('')
-  const [plan, setPlan] = useState(null)
-  const [prompt, setPrompt] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [stage, setStage] = useState(0)
-  const [reveal, setReveal] = useState(0)
-  const [history, setHistory] = useState(() => loadJSON('planai.history', []))
-  const [settings, setSettings] = useState(() => ({ ...DEFAULT_SETTINGS, ...loadJSON('planai.settings', {}) }))
+  const [chats, setChats] = useState(() => loadJSON(CHATS_KEY, []))
+  const [activeId, setActiveId] = useState(() => loadJSON(ACTIVE_KEY, null))
+  const [draft, setDraft] = useState('')
+  const [streaming, setStreaming] = useState(false)
+  const [streamText, setStreamText] = useState('')
+  const [settings, setSettings] = useState(() => ({ apiKey: '', ...loadJSON(SETTINGS_KEY, {}) }))
   const [showSettings, setShowSettings] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [toast, setToast] = useState('')
 
-  const timeouts = useRef([])
-  const interval = useRef(null)
-  const toastTimer = useRef(null)
   const textarea = useRef(null)
+  const endRef = useRef(null)
+  const toastTimer = useRef(null)
+
+  const activeChat = useMemo(() => chats.find((c) => c.id === activeId) || null, [chats, activeId])
+  const hasKey = Boolean((settings.apiKey || '').trim())
 
   useEffect(() => {
-    try { localStorage.setItem('planai.history', JSON.stringify(history)) } catch { /* storage unavailable */ }
-  }, [history])
+    try { localStorage.setItem(CHATS_KEY, JSON.stringify(chats)) } catch { /* storage unavailable */ }
+  }, [chats])
   useEffect(() => {
-    try { localStorage.setItem('planai.settings', JSON.stringify(settings)) } catch { /* storage unavailable */ }
+    try { localStorage.setItem(ACTIVE_KEY, JSON.stringify(activeId)) } catch { /* storage unavailable */ }
+  }, [activeId])
+  useEffect(() => {
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)) } catch { /* storage unavailable */ }
   }, [settings])
-
-  useEffect(() => () => {
-    timeouts.current.forEach(clearTimeout)
-    if (interval.current) clearInterval(interval.current)
-    if (toastTimer.current) clearTimeout(toastTimer.current)
-  }, [])
+  useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current) }, [])
 
   const notify = useCallback((msg) => {
     setToast(msg)
     if (toastTimer.current) clearTimeout(toastTimer.current)
-    toastTimer.current = setTimeout(() => setToast(''), 2200)
+    toastTimer.current = setTimeout(() => setToast(''), 2600)
   }, [])
 
-  const startReveal = useCallback((nextPlan) => {
-    const total = nextPlan.phases.length + nextPlan.milestones.length + nextPlan.risks.length + nextPlan.tips.length
-    if (interval.current) clearInterval(interval.current)
-    let n = 0
-    setReveal(0)
-    interval.current = setInterval(() => {
-      n += 1
-      setReveal(n)
-      if (n >= total) {
-        clearInterval(interval.current)
-        interval.current = null
-      }
-    }, 65)
-  }, [])
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ block: 'end' })
+  }, [chats, streamText, streaming])
 
-  const generate = useCallback((text) => {
-    const value = String(text || '').trim()
-    if (!value || loading) return
-    timeouts.current.forEach(clearTimeout)
-    timeouts.current = []
-    if (interval.current) clearInterval(interval.current)
+  const send = useCallback(async (raw) => {
+    const text = String(raw || '').trim()
+    if (!text || streaming) return
 
-    setPrompt(value)
-    setInput('')
-    setPlan(null)
-    setLoading(true)
-    setStage(0)
-    setReveal(0)
-    setSidebarOpen(false)
-
-    const finish = (nextPlan) => {
-      timeouts.current.forEach(clearTimeout)
-      timeouts.current = []
-      setPlan(nextPlan)
-      setLoading(false)
-      setStage(THINKING.length - 1)
-      setHistory((prev) => [nextPlan, ...prev.filter((p) => p.id !== nextPlan.id)].slice(0, 30))
-      startReveal(nextPlan)
-    }
-
-    const nextPlan = generatePlan(value, {
-      days: settings.days ? Number(settings.days) : undefined,
-      hours: settings.hours,
-      level: settings.level,
-    })
-
-    if (settings.engine === 'gemini') {
-      // Animate reasoning steps while Gemini responds.
-      let i = 0
-      const tick = () => {
-        setStage(i % THINKING.length)
-        i += 1
-        timeouts.current.push(setTimeout(tick, 320))
-      }
-      tick()
-
-      callGemini({
-        apiKey: settings.apiKey,
-        model: settings.geminiModel,
-        prompt: `Goal: ${value}\nPreferred level: ${settings.level}.\nDesired duration: ${settings.days || 'infer from goal'}.\nFocus hours per block: ${settings.hours}h.`,
-      })
-        .then(finish)
-        .catch((err) => {
-          notify(`Gemini error — using your local model. ${err.message}`)
-          finish(nextPlan)
-        })
+    if (!hasKey) {
+      setShowSettings(true)
+      notify('Add your Gemini API key to start chatting')
       return
     }
 
-    THINKING.forEach((_, i) => {
-      timeouts.current.push(setTimeout(() => setStage(i), i * 300))
-    })
+    const userMsg = { role: 'user', content: text, id: `u_${Date.now()}` }
+    const isNew = !activeChat
+    const id = activeChat?.id || `c_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
+    const messages = [...(activeChat?.messages || []), userMsg]
 
-    timeouts.current.push(setTimeout(() => finish(nextPlan), THINKING.length * 300 + 250))
-  }, [loading, settings, startReveal, notify])
+    if (isNew) {
+      const chat = {
+        id,
+        title: text.replace(/\s+/g, ' ').slice(0, 44),
+        createdAt: new Date().toISOString(),
+        messages,
+      }
+      setChats((prev) => [chat, ...prev])
+      setActiveId(id)
+    } else {
+      setChats((prev) => prev.map((c) => c.id === id ? { ...c, messages } : c))
+    }
 
-  const openPlan = useCallback((saved) => {
-    timeouts.current.forEach(clearTimeout)
-    if (interval.current) clearInterval(interval.current)
-    setPrompt(saved.input)
-    setPlan(saved)
-    setLoading(false)
+    setDraft('')
     setSidebarOpen(false)
-    setReveal(9999)
+    setStreaming(true)
+    setStreamText('')
+
+    try {
+      const answer = await chatWithGemini({
+        apiKey: settings.apiKey,
+        messages,
+        onChunk: (full) => setStreamText(full),
+      })
+      setChats((prev) => prev.map((c) => c.id === id
+        ? { ...c, messages: [...c.messages, { role: 'assistant', content: answer, id: `a_${Date.now()}` }] }
+        : c))
+    } catch (err) {
+      const detail = err?.message || 'Something went wrong.'
+      setChats((prev) => prev.map((c) => c.id === id
+        ? { ...c, messages: [...c.messages, { role: 'assistant', content: `⚠️ ${detail}`, id: `a_${Date.now()}` }] }
+        : c))
+      notify('Gemini request failed')
+    } finally {
+      setStreaming(false)
+      setStreamText('')
+      setTimeout(() => textarea.current?.focus(), 30)
+    }
+  }, [streaming, hasKey, activeChat, settings.apiKey, notify])
+
+  const newChat = useCallback(() => {
+    setActiveId(null)
+    setDraft('')
+    setSidebarOpen(false)
+    setTimeout(() => textarea.current?.focus(), 30)
   }, [])
 
-  const newPlan = useCallback(() => {
-    timeouts.current.forEach(clearTimeout)
-    if (interval.current) clearInterval(interval.current)
-    setPlan(null)
-    setPrompt('')
-    setInput('')
-    setLoading(false)
+  const openChat = useCallback((id) => {
+    setActiveId(id)
     setSidebarOpen(false)
-    setTimeout(() => textarea.current?.focus(), 50)
   }, [])
+
+  const deleteChat = useCallback((id, e) => {
+    e.stopPropagation()
+    setChats((prev) => prev.filter((c) => c.id !== id))
+    if (activeId === id) setActiveId(null)
+  }, [activeId])
+
+  const clearAll = useCallback(() => {
+    setChats([])
+    setActiveId(null)
+    setSettings({ apiKey: '' })
+    setShowSettings(false)
+    notify('Everything cleared')
+  }, [notify])
 
   useEffect(() => {
     const onKey = (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'n') {
         e.preventDefault()
-        newPlan()
+        newChat()
       }
+      if (e.key === 'Escape') setShowSettings(false)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [newPlan])
+  }, [newChat])
 
-  const copyMarkdown = useCallback(async () => {
-    if (!plan) return
-    const text = planToMarkdown(plan)
-    try {
-      await navigator.clipboard.writeText(text)
-      notify('Plan copied as Markdown')
-    } catch {
-      const el = document.createElement('textarea')
-      el.value = text
-      document.body.appendChild(el)
-      el.select()
-      document.execCommand('copy')
-      el.remove()
-      notify('Plan copied as Markdown')
-    }
-  }, [plan, notify])
-
-  const downloadMarkdown = useCallback(() => {
-    if (!plan) return
-    const blob = new Blob([planToMarkdown(plan)], { type: 'text/markdown;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `${plan.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}.md`
-    a.click()
-    URL.revokeObjectURL(url)
-    notify('Markdown file downloaded')
-  }, [plan, notify])
-
-  const clearAll = useCallback(() => {
-    setHistory([])
-    setSettings(DEFAULT_SETTINGS)
-    setShowSettings(false)
-    newPlan()
-    notify('Local data cleared')
-  }, [newPlan, notify])
-
-  const groupedHistory = useMemo(() => {
-    const groups = { Today: [], Earlier: [] }
-    const today = new Date().toDateString()
-    history.forEach((p) => {
-      groups[new Date(p.createdAt).toDateString() === today ? 'Today' : 'Earlier'].push(p)
-    })
-    return groups
-  }, [history])
-
-  const composer = (
-    <div className="composer-wrap">
-      <div className="composer-inner">
-        <div className="composer card">
-          <textarea
-            ref={textarea}
-            value={input}
-            rows={2}
-            placeholder="What do you want a plan for?  e.g. Learn Japanese in 4 months"
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
-                e.preventDefault()
-                generate(input)
-              }
-              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                e.preventDefault()
-                generate(input)
-              }
-            }}
-          />
-          <div className="composer-foot">
-            <div className="composer-hints">
-              <span><Zap size={12} /> Enter to generate</span>
-              <span className="hide-sm"><ShieldOff size={12} /> Unrestricted</span>
-              <span className="hide-sm"><WifiOff size={12} /> Offline</span>
-            </div>
-            <button className="send-btn" onClick={() => generate(input)} disabled={!input.trim() || loading}>
-              {loading ? <span className="spinner" /> : <ArrowUp size={18} />}
-            </button>
-          </div>
-        </div>
-        <div className="composer-note">PLAN AI makes plans for any goal you give it. Everything runs locally — no key, no account, no telemetry.</div>
-      </div>
-    </div>
-  )
+  const grouped = useMemo(() => groupChats(chats), [chats])
 
   return (
     <div className="app">
       <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
         <div className="sidebar-top">
-          <Logo />
-          <button className="icon-btn mobile-close" onClick={() => setSidebarOpen(false)}><X size={17} /></button>
+          <div className="brand"><span className="brand-icon"><Star size={17} /></span><span>PLAN AI</span></div>
+          <button className="icon-btn mobile-close" onClick={() => setSidebarOpen(false)} aria-label="Close menu"><X size={18} /></button>
         </div>
 
-        <button className="new-plan-btn" onClick={newPlan}>
-          <Plus size={16} /> New plan <span>⌘N</span>
+        <button className="new-chat" onClick={newChat}>
+          <Plus size={16} /> New chat
         </button>
 
-        <div className="sidebar-section">
-          <div className="sidebar-label"><History size={13} /> RECENT PLANS</div>
-          {history.length === 0 ? (
-            <div className="empty-history">Your generated plans will appear here.</div>
-          ) : (
-            Object.entries(groupedHistory).map(([label, items]) => items.length > 0 && (
-              <div key={label} className="history-group">
-                <div className="history-day">{label}</div>
-                {items.map((p) => {
-                  const Icon = DOMAIN_ICONS[p.domain] || Compass
-                  return (
-                    <button key={p.id} className={`history-item ${plan?.id === p.id ? 'active' : ''}`} onClick={() => openPlan(p)}>
-                      <span className="history-icon" style={{ color: p.accent }}><Icon size={14} /></span>
-                      <span className="history-text">{p.subject}</span>
-                      <ChevronRight size={13} className="history-chevron" />
-                    </button>
-                  )
-                })}
-              </div>
-            ))
-          )}
+        <div className="chat-list">
+          {chats.length === 0 && <div className="empty-history">Your chats will appear here.</div>}
+          {Object.entries(grouped).map(([label, items]) => items.length > 0 && (
+            <div className="chat-group" key={label}>
+              <div className="group-label">{label}</div>
+              {items.map((c) => (
+                <button
+                  key={c.id}
+                  className={`chat-item ${activeId === c.id ? 'active' : ''}`}
+                  onClick={() => openChat(c.id)}
+                >
+                  <span className="chat-title">{c.title}</span>
+                  <span className="chat-delete" onClick={(e) => deleteChat(c.id, e)} role="button" aria-label="Delete chat"><X size={14} /></span>
+                </button>
+              ))}
+            </div>
+          ))}
         </div>
 
         <div className="sidebar-bottom">
-          <div className="engine-status">
-            <span className="pulse-dot" />
-            <div><strong>Engine online</strong><small>{settings.engine === 'gemini' ? 'gemini-api' : 'local-v1'} · {history.length} plans saved</small></div>
-          </div>
-          <button className="settings-link" onClick={() => setShowSettings(true)}><Settings size={15} /> Model settings</button>
+          <button className="settings-link" onClick={() => setShowSettings(true)}>
+            <Settings size={16} /> API key {hasKey && <span className="key-dot" />}
+          </button>
         </div>
       </aside>
 
@@ -573,68 +276,60 @@ export default function App() {
 
       <main className="main">
         <header className="topbar">
-          <button className="icon-btn menu-btn" onClick={() => setSidebarOpen(true)}><Menu size={18} /></button>
+          <button className="icon-btn menu-btn" onClick={() => setSidebarOpen(true)} aria-label="Open menu"><Menu size={19} /></button>
           <div className="topbar-title">
             <strong>PLAN AI</strong>
-            <span>/</span>
-            <span>{plan ? plan.domainLabel : 'Planner'}</span>
+            <span className="model-pill">Gemini</span>
           </div>
-          <div className="topbar-badges">
-            <span className="badge"><ShieldOff size={12} /> NO RESTRICTIONS</span>
-            <span className="badge"><WifiOff size={12} /> {settings.engine === 'gemini' ? 'YOUR KEY' : 'NO API KEY'}</span>
-            <span className="badge accent"><Cpu size={12} /> {settings.engine === 'gemini' ? 'GEMINI' : 'ON-DEVICE'}</span>
-          </div>
-          <button className="icon-btn top-settings" onClick={() => setShowSettings(true)} title="Settings"><Settings size={17} /></button>
+          <button className="icon-btn top-settings" onClick={() => setShowSettings(true)} aria-label="Settings"><Settings size={18} /></button>
         </header>
 
-        <div className="scroll-area">
-          {!plan && !loading ? (
-            <section className="welcome">
-              <div className="hero-glow" />
-              <div className="hero-kicker"><span className="pulse-dot" /> LOCAL MODEL READY · V1</div>
-              <h1>Turn any goal into<br /><span>a plan that moves.</span></h1>
-              <p className="hero-sub">
-                PLAN AI is a self-contained planning model that runs right here in your browser.
-                No API key. No account. No cloud. No content gatekeeping. Just structured, actionable roadmaps.
-              </p>
-
-              <div className="hero-features">
-                <div className="feature"><span className="feature-icon cyan"><Cpu size={17} /></span><div><strong>Own model</strong><small>Custom local inference engine</small></div></div>
-                <div className="feature"><span className="feature-icon violet"><ShieldOff size={17} /></span><div><strong>Unrestricted</strong><small>Every prompt gets an answer</small></div></div>
-                <div className="feature"><span className="feature-icon green"><Zap size={17} /></span><div><strong>Instant</strong><small>No network round-trips</small></div></div>
-              </div>
-
-              <div className="examples">
-                <div className="examples-label">TRY ONE OF THESE</div>
-                <div className="example-list">
-                  {EXAMPLES.map((ex) => (
-                    <button key={ex} onClick={() => { setInput(ex); textarea.current?.focus() }} className="example-chip">
-                      {ex} <ChevronRight size={13} />
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </section>
-          ) : (
-            <section className="conversation">
-              <div className="prompt-bubble">
-                <span className="prompt-avatar">YOU</span>
-                <p>{prompt}</p>
-              </div>
-              {loading ? <Thinking stage={stage} /> : plan && (
-                <PlanDocument
-                  plan={plan}
-                  reveal={reveal}
-                  onCopy={copyMarkdown}
-                  onDownload={downloadMarkdown}
-                  onRegenerate={() => generate(prompt)}
-                />
+        <div className="messages">
+          {!activeChat && !streaming ? (
+            <div className="welcome">
+              <div className="welcome-icon"><Star size={30} /></div>
+              <h1>What can I help with?</h1>
+              <p>Ask anything. Get a straight answer.</p>
+              {!hasKey && (
+                <button className="key-prompt" onClick={() => setShowSettings(true)}>
+                  Add your Gemini API key to start <ArrowUp size={14} />
+                </button>
               )}
-            </section>
+            </div>
+          ) : (
+            <div className="thread">
+              {(activeChat?.messages || []).map((m) => <Message key={m.id} role={m.role} content={m.content} />)}
+              {streaming && (
+                streamText
+                  ? <Message role="assistant" content={streamText} />
+                  : <div className="message assistant thinking"><div className="assistant-avatar"><Star size={16} /></div><div className="dots"><i /><i /><i /></div></div>
+              )}
+              <div ref={endRef} />
+            </div>
           )}
         </div>
 
-        {composer}
+        <div className="composer-wrap">
+          <div className="composer">
+            <textarea
+              ref={textarea}
+              value={draft}
+              rows={1}
+              placeholder="Message PLAN AI..."
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault()
+                  send(draft)
+                }
+              }}
+            />
+            <button className="send-btn" onClick={() => send(draft)} disabled={!draft.trim() || streaming} aria-label="Send">
+              {streaming ? <span className="spinner" /> : <ArrowUp size={17} />}
+            </button>
+          </div>
+          <div className="disclaimer">PLAN AI can make mistakes. Double-check important information.</div>
+        </div>
       </main>
 
       {showSettings && (
