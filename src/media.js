@@ -122,9 +122,13 @@ function defaultMime(type) {
   return type === 'video' ? 'video/mp4' : type === 'audio' ? 'audio/mpeg' : 'image/png'
 }
 
-export async function generateImage({ apiKey, prompt, signal }) {
+export async function generateImage({ apiKey, prompt, attachments = [], signal }) {
+  const requestParts = [{ text: prompt }]
+  for (const a of attachments || []) {
+    if (a?.data) requestParts.push({ inlineData: { mimeType: a.mimeType || 'image/png', data: a.data } })
+  }
   const body = {
-    contents: [{ parts: [{ text: prompt }] }],
+    contents: [{ parts: requestParts }],
     generationConfig: {
       responseModalities: ['IMAGE'],
       imageConfig: { aspectRatio: aspectFrom(prompt) },
@@ -139,8 +143,12 @@ export async function generateImage({ apiKey, prompt, signal }) {
   return { text: textFromParts(parts) || 'Here is your image.', media }
 }
 
-export async function generateMusic({ apiKey, prompt, signal }) {
-  const body = { contents: [{ parts: [{ text: prompt }] }] }
+export async function generateMusic({ apiKey, prompt, attachments = [], signal }) {
+  const requestParts = [{ text: prompt }]
+  for (const a of attachments || []) {
+    if (a?.data) requestParts.push({ inlineData: { mimeType: a.mimeType || 'image/png', data: a.data } })
+  }
+  const body = { contents: [{ parts: requestParts }] }
   const payload = await apiFetch(`${API}/v1/models/${MEDIA_MODELS.music}:generateContent`, apiKey, { method: 'POST', body: JSON.stringify(body) }, signal)
   const parts = partsOf(payload)
   const media = []

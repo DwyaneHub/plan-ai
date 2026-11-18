@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { ArrowUp, Check, Copy, Menu, Plus, Settings, Sparkles, Trash2, X } from 'lucide-react'
+import { ArrowUp, Check, Copy, Menu, Paperclip, Plus, Settings, Sparkles, Trash2, X } from 'lucide-react'
 import { chatWithGemini } from './gemini.js'
 import { detectIntent, generateImage, generateMusic, generateVideo, PROMPT_SYSTEM_HINT } from './media.js'
 
@@ -16,6 +16,45 @@ function loadJSON(key, fallback) {
   } catch {
     return fallback
   }
+}
+
+function attachmentSrc(attachment) {
+  return `data:${attachment?.mimeType || 'image/png'};base64,${attachment?.data || ''}`
+}
+
+function readImageFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(reader.error || new Error('Could not read that image.'))
+    reader.onload = () => {
+      const img = new Image()
+      img.onerror = () => reject(new Error('Could not open that image.'))
+      img.onload = () => {
+        const max = 1280
+        const scale = Math.min(1, max / Math.max(img.width || 1, img.height || 1))
+        const width = Math.max(1, Math.round((img.width || 1) * scale))
+        const height = Math.max(1, Math.round((img.height || 1) * scale))
+        const canvas = document.createElement('canvas')
+        canvas.width = width
+        canvas.height = height
+        const ctx = canvas.getContext('2d')
+        if (!ctx) {
+          reject(new Error('Image processing is unavailable in this browser.'))
+          return
+        }
+        ctx.drawImage(img, 0, 0, width, height)
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.85)
+        resolve({
+          id: `att_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          name: file.name || 'image.jpg',
+          mimeType: 'image/jpeg',
+          data: dataUrl.includes(',') ? dataUrl.slice(dataUrl.indexOf(',') + 1) : '',
+        })
+      }
+      img.src = String(reader.result || '')
+    }
+    reader.readAsDataURL(file)
+  })
 }
 
 async function copyToClipboard(text) {
@@ -112,7 +151,7 @@ function MediaBlock({ media }) {
   )
 }
 
-function Message({ role, content, media = [], kind, onNotify }) {
+function Message({ role, content, media = [], attachments = [], kind, onNotify }) {
   const copy = async (value, success) => {
     const ok = await copyToClipboard(value)
     onNotify?.(ok ? success : 'Copy failed — select the text manually')
@@ -124,6 +163,15 @@ function Message({ role, content, media = [], kind, onNotify }) {
         <div className="user-wrap">
           <button className="copy-btn user-copy" onClick={() => copy(content, 'Message copied')} title="Copy message"><Copy size={13} /> Copy</button>
           <div className="user-bubble">{content}</div>
+          {attachments.length > 0 && (
+            <div className="attachment-row">
+              {attachments.map((a, i) => (
+                <a key={a.id || i} href={attachmentSrc(a)} target="_blank" rel="noreferrer" title={a.name || 'Attached image'}>
+                  <img src={attachmentSrc(a)} alt={a.name || 'Attached image'} />
+                </a>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     )
@@ -171,6 +219,8 @@ export default function App() {
   const [chats, setChats] = useState(() => loadJSON(CHATS_KEY, []))
   const [activeId, setActiveId] = useState(() => loadJSON(ACTIVE_KEY, null))
   const [draft, setDraft] = useState('')
+  const [attachments, setAttachments] = useState([])
+  const [dragging, setDragging] = useState(false)
   const [streaming, setStreaming] = useState(false)
   const [streamText, setStreamText] = useState('')
   const [progress, setProgress] = useState('')
@@ -180,6 +230,7 @@ export default function App() {
   const [toast, setToast] = useState('')
 
   const textarea = useRef(null)
+  const fileInput = useRef(null)
   const endRef = useRef(null)
   const toastTimer = useRef(null)
 
@@ -191,7 +242,7 @@ export default function App() {
       localStorage.setItem(CHATS_KEY, JSON.stringify(chats))
       return
     } catch { /* media can exceed localStorage quota */ }
-    const strip = (list) => list.map((c) => ({ ...c, messages: c.messages.map(({ media, ...m }) => m) }))
+    const strip = (list) => list.map((c) => ({ ...c, messages: c.messages.map(({ media, attachments, ...m }) => m) }))
     try {
       localStorage.setItem(CHATS_KEY, JSON.stringify([chats[0], ...strip(chats.slice(1))].filter(Boolean)))
     } catch {
@@ -212,13 +263,34 @@ export default function App() {
     toastTimer.current = setTimeout(() => setToast(''), 2600)
   }, [])
 
+  const addFiles = useCallback(async (fileList) => {
+    const files = Array.from(fileList || []).filter((f) => String(f.type || '').startsWith('image/'))
+    if (!files.length) {
+      notify('Only image files can be attached')
+      return
+    }
+    if (files.length > 5) notify('Up to 5 images per message')
+    try {
+      const loaded = await Promise.all(files.slice(0, 5).map(readImageFile))
+      setAttachments((prev) => [...prev, ...loaded].slice(0, 5))
+      if (loaded.length) notify(`${loaded.length} image${loaded.length > 1 ? 's' : ''} attached`)
+    } catch (err) {
+      notify(err?.message || 'Could not attach that image')
+    }
+  }, [notify])
+
+  const removeAttachment = useCallback((id) => {
+    setAttachments((prev) => prev.filter((a) => a.id !== id))
+  }, [])
+
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: 'end' })
   }, [chats, streamText, streaming])
 
   const send = useCallback(async (raw) => {
     const text = String(raw || '').trim()
-    if (!text || streaming) return
+    const sentAttachments = attachments.map((a) => ({ ...a }))
+    if ((!text && !sentAttachments.length) || streaming) return
 
     if (!hasKey) {
       setShowSettings(true)
@@ -226,7 +298,13 @@ export default function App() {
       return
     }
 
-    const userMsg = { role: 'user', content: text, id: `u_${Date.now()}` }
+    const promptText = text || 'What do you see in this image?'
+    const userMsg = {
+      role: 'user',
+      content: promptText,
+      attachments: sentAttachments,
+      id: `u_${Date.now()}`,
+    }
     const isNew = !activeChat
     const id = activeChat?.id || `c_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
     const messages = [...(activeChat?.messages || []), userMsg]
@@ -234,7 +312,7 @@ export default function App() {
     if (isNew) {
       const chat = {
         id,
-        title: text.replace(/\s+/g, ' ').slice(0, 44),
+        title: promptText.replace(/\s+/g, ' ').slice(0, 44),
         createdAt: new Date().toISOString(),
         messages,
       }
@@ -245,12 +323,13 @@ export default function App() {
     }
 
     setDraft('')
+    setAttachments([])
     setSidebarOpen(false)
     setStreaming(true)
     setStreamText('')
     setProgress('')
 
-    const intent = detectIntent(text)
+    const intent = text ? detectIntent(text) : 'chat'
     const labels = {
       image: 'Generating image…',
       video: 'Starting video…',
@@ -263,17 +342,21 @@ export default function App() {
     try {
       let result
       if (intent === 'image') {
-        result = await generateImage({ apiKey: settings.apiKey, prompt: text })
+        result = await generateImage({ apiKey: settings.apiKey, prompt: promptText, attachments: sentAttachments })
       } else if (intent === 'music') {
-        result = await generateMusic({ apiKey: settings.apiKey, prompt: text })
+        result = await generateMusic({ apiKey: settings.apiKey, prompt: promptText, attachments: sentAttachments })
       } else if (intent === 'video') {
-        result = await generateVideo({ apiKey: settings.apiKey, prompt: text, onProgress: setProgress })
+        result = await generateVideo({ apiKey: settings.apiKey, prompt: promptText, onProgress: setProgress })
       } else {
         let apiMessages = messages
         if (intent === 'prompt') {
           apiMessages = [
             ...messages.slice(0, -1),
-            { role: 'user', content: `Write one highly detailed, production-ready generative media prompt for this request. ${PROMPT_SYSTEM_HINT}\n\nRequest: ${text}` },
+            {
+              role: 'user',
+              content: `Write one highly detailed, production-ready generative media prompt for this request. ${PROMPT_SYSTEM_HINT}\n\nRequest: ${promptText}`,
+              attachments: userMsg.attachments,
+            },
           ]
         }
         const answer = await chatWithGemini({
@@ -308,11 +391,12 @@ export default function App() {
       setProgress('')
       setTimeout(() => textarea.current?.focus(), 30)
     }
-  }, [streaming, hasKey, activeChat, settings.apiKey, notify])
+  }, [streaming, hasKey, activeChat, settings.apiKey, attachments, notify])
 
   const newChat = useCallback(() => {
     setActiveId(null)
     setDraft('')
+    setAttachments([])
     setSidebarOpen(false)
     setTimeout(() => textarea.current?.focus(), 30)
   }, [])
@@ -450,23 +534,70 @@ export default function App() {
         </div>
 
         <div className="composer-wrap">
-          <div className="composer">
-            <textarea
-              ref={textarea}
-              value={draft}
-              rows={1}
-              placeholder="Ask for text, an image, a video, a song, or a prompt..."
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault()
-                  send(draft)
-                }
+          <div
+            className={`composer ${dragging ? 'dragging' : ''}`}
+            onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
+            onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragging(false) }}
+            onDrop={(e) => {
+              e.preventDefault()
+              setDragging(false)
+              addFiles(e.dataTransfer.files)
+            }}
+          >
+            <input
+              ref={fileInput}
+              className="file-input"
+              type="file"
+              accept="image/*"
+              multiple
+              onChange={(e) => {
+                addFiles(e.target.files)
+                e.target.value = ''
               }}
             />
-            <button className="send-btn" onClick={() => send(draft)} disabled={!draft.trim() || streaming} aria-label="Send">
-              {streaming ? <span className="spinner" /> : <ArrowUp size={17} />}
-            </button>
+            {attachments.length > 0 && (
+              <div className="attachment-preview">
+                {attachments.map((a) => (
+                  <div className="attach-thumb" key={a.id}>
+                    <img src={attachmentSrc(a)} alt={a.name || 'Attached image'} />
+                    <button className="attach-remove" onClick={() => removeAttachment(a.id)} title="Remove image" aria-label="Remove image"><X size={11} /></button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="composer-row">
+              <button
+                type="button"
+                className="icon-btn attach-btn"
+                onClick={() => fileInput.current?.click()}
+                disabled={streaming}
+                title="Attach images"
+                aria-label="Attach images"
+              >
+                <Paperclip size={18} />
+              </button>
+              <textarea
+                ref={textarea}
+                value={draft}
+                rows={1}
+                placeholder="Ask, attach an image, or request media..."
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault()
+                    send(draft)
+                  }
+                }}
+              />
+              <button
+                className="send-btn"
+                onClick={() => send(draft)}
+                disabled={(!draft.trim() && !attachments.length) || streaming}
+                aria-label="Send"
+              >
+                {streaming ? <span className="spinner" /> : <ArrowUp size={17} />}
+              </button>
+            </div>
           </div>
         </div>
       </main>

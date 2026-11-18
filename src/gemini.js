@@ -26,13 +26,30 @@ const SAFETY_SETTINGS = [
   'HARM_CATEGORY_CIVIC_INTEGRITY',
 ].map((category) => ({ category, threshold: 'BLOCK_NONE' }))
 
-export function toGeminiContents(messages) {
-  return (messages || [])
-    .filter((m) => m && (m.role === 'user' || m.role === 'assistant') && String(m.content || '').trim())
-    .map((m) => ({
-      role: m.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: String(m.content) }],
-    }))
+function inlineParts(attachments = []) {
+  return (attachments || [])
+    .filter((a) => a?.data)
+    .map((a) => ({ inlineData: { mimeType: a.mimeType || 'image/png', data: a.data } }))
+}
+
+export function toGeminiContents(messages, attachments = []) {
+  const contents = []
+  for (const m of messages || []) {
+    if (!m || (m.role !== 'user' && m.role !== 'assistant')) continue
+    const parts = []
+    if (String(m.content || '').trim()) parts.push({ text: String(m.content) })
+    parts.push(...inlineParts(m.attachments))
+    if (!parts.length) continue
+    contents.push({ role: m.role === 'assistant' ? 'model' : 'user', parts })
+  }
+
+  const extras = inlineParts(attachments)
+  if (extras.length) {
+    const last = contents[contents.length - 1]
+    if (last?.role === 'user') last.parts.push(...extras)
+    else contents.push({ role: 'user', parts: extras })
+  }
+  return contents
 }
 
 function extractText(payload) {
@@ -122,10 +139,10 @@ async function generateOnce({ apiKey, contents, signal }) {
   return extractText(payload).trim()
 }
 
-export async function chatWithGemini({ apiKey, messages, onChunk, signal }) {
+export async function chatWithGemini({ apiKey, messages, attachments, onChunk, signal }) {
   if (!apiKey || !apiKey.trim()) throw new Error('Add your Gemini API key in settings first.')
   const key = apiKey.trim()
-  const contents = toGeminiContents(messages)
+  const contents = toGeminiContents(messages, attachments)
   if (!contents.length) throw new Error('Write a message first.')
 
   try {
